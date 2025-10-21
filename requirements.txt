@@ -1,0 +1,49 @@
+# Core Framework
+flask
+flask-cors
+streamlit
+python-dotenv
+
+# AI and ML
+langchain
+langchain-google-genai
+google-generativeai
+transformers
+torch
+sentence-transformers
+
+# Document Processing
+pdfminer.six
+docx2txt
+python-docx
+PyPDF2
+
+# Database and Storage
+firebase-admin
+boto3
+sqlalchemy
+
+# Authentication and Security
+PyJWT
+bcrypt
+cryptography
+
+# API and Requests
+requests
+aiohttp
+
+# Embeddings and Vector DB
+chromadb
+faiss-cpu
+
+# Utilities
+pandas
+numpy
+python-multipart
+Pillow
+validators
+
+# Development
+pytest
+black
+flake8
