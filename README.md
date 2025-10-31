@@ -1,16 +1,36 @@
 # ⚖️ LuminaryAI — Agentic Legal Intelligence Assistant for Indian Law
 
-> “Making Indian law understandable, accessible, and intelligent — for everyone.”
+> "Making Indian law understandable, accessible, and intelligent — for everyone."
 
 ## 🧩 Overview
 
-LuminaryAI is an agentic, AI-powered legal assistant designed to analyze legal documents, interpret Indian laws, and provide tailored legal insights for practising lawyers, law students, and the general public.
+LuminaryAI is an **intelligent, document-aware legal assistant** with autonomous capabilities, designed to analyze legal documents, interpret Indian laws, and provide tailored legal insights for practising lawyers, law students, and the general public.
 
-Built using LangChain, Gemini LLM, and Python, LuminaryAI offers context-aware legal understanding, real-time document analysis, and secure, personalized recommendations — all through a Streamlit-based frontend and Flask-powered backend.
+Built using **LangChain, Gemini LLM, RAG (Retrieval-Augmented Generation), and Python**, LuminaryAI offers:
+
+- 🤖 **Autonomous document management** via intelligent agents
+- 📚 **Persistent knowledge base** with semantic search
+- 🎯 **Context-aware legal advice** based on your documents
+- ⚡ **Multi-document operations** in single queries
+- 🔍 **Source citations** with confidence scores
+
+All through a Streamlit-based frontend and Flask-powered backend with **9 intelligent tools** for document operations.
 
 ## 🌟 Key Features
 
-- **Agentic Legal Intelligence** (LangChain + Gemini)
+### 🆕 **Document Management & RAG**
+
+- **🤖 Autonomous Agent** - LLM autonomously manages documents using 9 intelligent tools
+- **📚 Document RAG Pipeline** - Semantic search with Gemini embeddings (768-dim vectors)
+- **🔍 Intelligent Search** - Find relevant clauses across all documents instantly
+- **💬 Document Q&A** - Ask questions about specific documents
+- **📊 Multi-Doc Analysis** - Compare documents, extract insights, identify risks
+- **📁 Persistent Knowledge Base** - Store and retrieve documents with metadata
+- **🎯 Source Citations** - All answers include source documents with similarity scores
+
+### ⚡ **Core AI Features**
+
+- **Agentic Legal Intelligence** (LangChain + Gemini + 9 Tools)
 - **Smart Query Enhancement** - Automatic query reiteration for clarity (score < 8)
 - **Role-Based Responses** - Tailored answers for Lawyers/Students/Public
 - **Query Validation & Semantic Answers** - Intelligent query analysis with short/detailed response modes
@@ -96,8 +116,20 @@ streamlit run main.py
 
 **Access:**
 
-- Frontend: http://localhost:8501
-- Backend API: http://localhost:5000
+- Frontend: <http://localhost:8501>
+- Backend API: <http://localhost:5000>
+
+## 🧪 Test
+
+```powershell
+# Run comprehensive test suite
+python test_suite.py
+
+# Run specific tests
+python test_suite.py --test rag
+python test_suite.py --test langchain
+python test_suite.py --test app
+```
 
 ## 🎯 Key Features & Guides
 
@@ -135,11 +167,31 @@ LuminaryAI/
 └── uploads/                   # Document storage (auto-created)
 ```
 
+## 📚 Documentation
+
+- **[DOCUMENTATION.md](DOCUMENTATION.md)** - Complete API reference, usage examples, architecture
+- **[PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)** - Project structure and file organization
+- **[DOCUMENT_RAG_TOOL.md](DOCUMENT_RAG_TOOL.md)** - RAG pipeline technical docs
+- **[LANGCHAIN_INTEGRATION.md](LANGCHAIN_INTEGRATION.md)** - LangChain agent guide
+- **[SETUP.md](SETUP.md)** - Detailed setup instructions
+
+## 🎯 Quick Reference
+
+| Resource         | Command/URL                  |
+| ---------------- | ---------------------------- |
+| **Test Suite**   | `python test_suite.py`       |
+| **API Docs**     | `GET http://localhost:5000/` |
+| **Status Check** | `GET /api/status`            |
+| **Agent Query**  | `POST /api/agent/query`      |
+
 ## ⚠️ Disclaimer
 
 LuminaryAI provides AI-generated summaries of Indian laws and legal documents for educational and informational purposes only. It is not a substitute for professional legal advice.
 
 ## 📧 Contact
 
-support@Luminaryai.in
-github.com/yourusername/LuminaryAI
+<support@Luminaryai.in>
+
+---
+
+**Version: 2.0.0** | **Status: Production Ready** ✅

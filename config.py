@@ -2,7 +2,15 @@
 Configuration module for LuminaryAI
 """
 import os
+import warnings
 from dotenv import load_dotenv
+
+# Suppress gRPC and other warnings
+os.environ['GRPC_VERBOSITY'] = 'ERROR'
+os.environ['GLOG_minloglevel'] = '3'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 load_dotenv()
 

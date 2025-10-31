@@ -18,11 +18,13 @@ from config import config, Config
 from models import init_db, get_session, User, Document, Query, UserRole
 from modules.auth import auth_manager
 from modules.document_processor import DocumentProcessor
-from modules.embeddings import EmbeddingGenerator
 from modules.legal_retriever import LegalRetriever
 from modules.memory_manager import MemoryManager
 from modules.orchestrator import LangChainOrchestrator
 from modules.reasoning_engine import GeminiReasoningEngine
+from modules.document_rag_chromadb import ChromaDBRAGTool  # NEW: ChromaDB instead of Gemini embeddings
+from modules.document_rag_langchain import create_document_rag_tools
+from modules.document_rag_routes import rag_bp
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -34,18 +36,24 @@ engine = init_db(app.config['DATABASE_URL'])
 
 # Initialize modules with error handling
 doc_processor = DocumentProcessor(app.config['UPLOAD_FOLDER'])
-embedding_gen = None
 legal_retriever = LegalRetriever()
 orchestrator = None
 reasoning_engine = None
+rag_tool = None
+langchain_tools = None
 
 # Initialize AI modules with proper error handling
 try:
     if Config.GOOGLE_API_KEY and Config.GOOGLE_API_KEY != 'your_gemini_api_key_here':
-        embedding_gen = EmbeddingGenerator()
         orchestrator = LangChainOrchestrator()
         reasoning_engine = GeminiReasoningEngine()
+        
+        # Initialize Document RAG Tool with ChromaDB (no API quota limits!)
+        rag_tool = ChromaDBRAGTool(storage_path="chromadb_storage", model_name="all-MiniLM-L6-v2")
+        langchain_tools = create_document_rag_tools(rag_tool=rag_tool)
+        
         print("✓ AI modules initialized successfully")
+        print(f"✓ Document RAG Tool initialized with {len(langchain_tools)} LangChain tools")
     else:
         print("⚠ Warning: GOOGLE_API_KEY not configured. AI features will be limited.")
         print("  Please set your API key in the .env file.")
@@ -55,6 +63,10 @@ except Exception as e:
 
 # Ensure upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# Register Document RAG API routes
+app.register_blueprint(rag_bp)
+print("✓ Document RAG API routes registered at /api/rag/*")
 
 # ============== Authentication Routes ==============
 
@@ -235,11 +247,11 @@ def upload_document():
 @app.route('/api/documents/<int:doc_id>/analyze', methods=['POST'])
 @auth_manager.token_required
 def analyze_document(doc_id):
-    """Analyze a document"""
+    """Analyze a document using enhanced Gemini-only processing"""
     try:
-        data = request.get_json()
-        query = data.get('query', 'Provide a comprehensive analysis')
-        analysis_type = data.get('type', 'comprehensive')
+        data = request.get_json() or {}
+        query = data.get('query', None)
+        analysis_type = data.get('type', 'comprehensive')  # comprehensive, summary, specific, qa
         
         user_id = request.current_user['user_id']
         user_role = request.current_user['role']
@@ -253,43 +265,68 @@ def analyze_document(doc_id):
             session.close()
             return jsonify({'error': 'Document not found'}), 404
         
-        # Check if AI modules are available
-        if not reasoning_engine and not orchestrator:
+        # Check if Gemini reasoning engine is available
+        if not reasoning_engine:
             session.close()
             return jsonify({
                 'error': 'AI service not available. Please configure GOOGLE_API_KEY in .env file and restart the server.'
             }), 503
         
-        # Process document
+        # Process document to extract text
         result = doc_processor.process_document(doc.file_path, doc.file_type)
         document_text = result['text']
+        document_metadata = result['metadata']
         
-        # Perform analysis
+        # Perform enhanced Gemini-based analysis
         try:
-            if analysis_type == 'gemini' and reasoning_engine:
-                analysis_result = reasoning_engine.analyze_legal_document(
-                    document_text, 
-                    analysis_type='comprehensive'
-                )
-                analysis = analysis_result.get('analysis', '')
-            elif orchestrator:
-                analysis = orchestrator.analyze_document(
-                    document_text,
-                    query,
-                    user_role
-                )
-            else:
-                analysis = "AI analysis service is currently unavailable. Please check your API configuration."
+            # Use the enhanced Gemini-only document analysis
+            analysis_result = reasoning_engine.analyze_legal_document(
+                document_text, 
+                analysis_type=analysis_type,
+                query=query  # For Q&A mode
+            )
+            
+            if not analysis_result.get('success', False):
+                raise Exception(analysis_result.get('error', 'Analysis failed'))
+            
+            # Build response with full analysis results
+            response_data = {
+                'document_id': doc_id,
+                'filename': doc.filename,
+                'analysis_type': analysis_type,
+                'analysis': analysis_result.get('analysis', ''),
+                'metadata': {
+                    'char_count': document_metadata.get('char_count'),
+                    'word_count': document_metadata.get('word_count'),
+                    'file_type': document_metadata.get('file_type')
+                }
+            }
+            
+            # Add key elements if available
+            if 'key_elements' in analysis_result:
+                response_data['key_elements'] = analysis_result['key_elements']
+            
+            # Add query info for Q&A mode
+            if analysis_type == 'qa' and query:
+                response_data['query'] = query
+                response_data['chunks_used'] = analysis_result.get('chunks_used', 0)
+            
+            # Add chunks info for comprehensive analysis
+            if 'chunks_analyzed' in analysis_result:
+                response_data['chunks_analyzed'] = analysis_result['chunks_analyzed']
+            
         except Exception as analysis_error:
             print(f"Analysis error: {str(analysis_error)}")
-            analysis = f"Analysis failed: {str(analysis_error)}"
+            import traceback
+            traceback.print_exc()
+            session.close()
+            return jsonify({
+                'error': f'Analysis failed: {str(analysis_error)}'
+            }), 500
         
         session.close()
         
-        return jsonify({
-            'document_id': doc_id,
-            'analysis': analysis
-        }), 200
+        return jsonify(response_data), 200
         
     except Exception as e:
         print(f"Document analysis error: {str(e)}")
@@ -403,6 +440,17 @@ def handle_query():
             print(f"Warning: Case search failed: {str(case_error)}")
             cases = []
         
+        # Step 2.5: Search relevant documents using RAG (NEW!)
+        document_context = []
+        if rag_tool:
+            try:
+                doc_search = rag_tool.semantic_search_all(query_text, top_k=5)
+                if doc_search.get('success') and doc_search.get('documents'):
+                    document_context = doc_search['documents'][:3]  # Top 3 relevant docs
+                    print(f"Found {len(document_context)} relevant documents in RAG")
+            except Exception as rag_error:
+                print(f"Warning: RAG search failed: {str(rag_error)}")
+        
         # Step 3: Build context
         session = get_session(engine)
         memory_mgr = MemoryManager(session)
@@ -413,6 +461,16 @@ def handle_query():
             user_context += "\n\nRelevant Cases:\n"
             for i, case in enumerate(cases[:3], 1):
                 user_context += f"{i}. {case.get('title', 'N/A')}\n"
+        
+        # Add document context from RAG (NEW!)
+        if document_context:
+            user_context += "\n\nRelevant Documents from Knowledge Base:\n"
+            for i, doc in enumerate(document_context, 1):
+                user_context += f"{i}. {doc.get('title', 'N/A')} (Relevance: {doc.get('max_similarity', 0):.2f})\n"
+                # Add top chunk preview
+                if doc.get('top_chunks'):
+                    preview = doc['top_chunks'][0].get('text', '')[:150]
+                    user_context += f"   Preview: {preview}...\n"
         
         # Step 4: Generate response based on mode
         response_text = ""
@@ -463,7 +521,16 @@ def handle_query():
             'query_reiterated': query_was_reiterated,
             'response': response_text,
             'mode': response_mode,
-            'related_cases': cases[:3] if cases else []
+            'related_cases': cases[:3] if cases else [],
+            'related_documents': [  # NEW: Include document context
+                {
+                    'doc_id': doc.get('doc_id'),
+                    'title': doc.get('title'),
+                    'relevance': doc.get('max_similarity', 0),
+                    'preview': doc.get('top_chunks', [{}])[0].get('text', '')[:200] if doc.get('top_chunks') else ''
+                }
+                for doc in document_context
+            ] if document_context else []
         }
         
         # Add validation info if available
@@ -477,6 +544,10 @@ def handle_query():
             # Include suggestions if quality was low
             if validation_result.get('quality_score', 10) < 8:
                 response_data['validation']['suggestions'] = validation_result.get('suggestions', '')
+        
+        # Add hint about using agent for complex document operations
+        if document_context and len(document_context) > 0:
+            response_data['hint'] = 'Multiple relevant documents found. Use /api/agent/query for complex document analysis.'
         
         return jsonify(response_data), 200
         
@@ -539,10 +610,112 @@ def health_check():
         'ai_modules': {
             'reasoning_engine': reasoning_engine is not None,
             'orchestrator': orchestrator is not None,
-            'embedding_gen': embedding_gen is not None,
+            'rag_tool': rag_tool is not None,
             'api_key_configured': bool(Config.GOOGLE_API_KEY and Config.GOOGLE_API_KEY != 'your_gemini_api_key_here')
         }
     }), 200
+
+@app.route('/api/agent/query', methods=['POST'])
+@auth_manager.token_required
+def agent_query():
+    """
+    Intelligent agent endpoint - LLM autonomously decides which tools to use
+    Handles document management, search, and analysis automatically
+    """
+    try:
+        if not langchain_tools or not orchestrator:
+            return jsonify({
+                'error': 'Agent not available. Please configure GOOGLE_API_KEY and restart.'
+            }), 503
+        
+        data = request.get_json()
+        query = data.get('query')
+        verbose = data.get('verbose', False)
+        
+        if not query:
+            return jsonify({'error': 'Query is required'}), 400
+        
+        user_id = request.current_user['user_id']
+        user_role = request.current_user['role']
+        
+        # Import LangChain agent components
+        from langchain.agents import AgentExecutor, create_react_agent
+        from langchain_classic.prompts import PromptTemplate
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        
+        # Create LLM
+        llm = ChatGoogleGenerativeAI(
+            model=Config.LLM_MODEL,
+            google_api_key=Config.GOOGLE_API_KEY,
+            temperature=0.7
+        )
+        
+        # Role-specific context
+        role_context = {
+            "lawyer": "You are assisting a practicing lawyer. Provide detailed legal analysis.",
+            "student": "You are assisting a law student. Explain concepts clearly with examples.",
+            "public": "You are assisting a member of the public. Use simple, accessible language."
+        }
+        context = role_context.get(user_role, role_context["public"])
+        
+        # Create prompt template
+        template = f"""You are LuminaryAI, an intelligent legal assistant specializing in Indian law.
+
+{context}
+
+You have access to document management tools that allow you to:
+- Add documents to the knowledge base
+- Search for relevant information across documents
+- Query specific documents for answers
+- Compare documents
+- List and manage documents
+
+Available tools:
+{{tools}}
+
+Tool names: {{tool_names}}
+
+Always:
+1. Think step-by-step about what tools you need
+2. Use tools when document operations are mentioned
+3. Provide accurate, source-based answers
+4. Be clear about document IDs when referencing specific documents
+5. Cite sources from documents when answering
+
+User Question: {{input}}
+
+{{agent_scratchpad}}"""
+
+        prompt = PromptTemplate.from_template(template)
+        
+        # Create agent
+        agent = create_react_agent(llm, langchain_tools, prompt)
+        agent_executor = AgentExecutor(
+            agent=agent,
+            tools=langchain_tools,
+            verbose=verbose,
+            max_iterations=15,
+            handle_parsing_errors=True,
+            early_stopping_method="generate"
+        )
+        
+        # Execute agent
+        result = agent_executor.invoke({"input": query})
+        
+        return jsonify({
+            'query': query,
+            'answer': result.get('output', ''),
+            'user_role': user_role,
+            'agent_type': 'autonomous',
+            'tools_available': len(langchain_tools),
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        print(f"Agent error: {str(e)}")
+        return jsonify({
+            'error': f'Agent execution failed: {str(e)}'
+        }), 500
 
 @app.route('/api/status', methods=['GET'])
 def status_check():
@@ -552,7 +725,8 @@ def status_check():
         'ai_modules': {
             'reasoning_engine': reasoning_engine is not None,
             'orchestrator': orchestrator is not None,
-            'embedding_gen': embedding_gen is not None
+            'rag_tool': rag_tool is not None,
+            'langchain_tools': langchain_tools is not None and len(langchain_tools) if langchain_tools else 0
         },
         'config': {
             'api_key_configured': bool(Config.GOOGLE_API_KEY and Config.GOOGLE_API_KEY != 'your_gemini_api_key_here'),
@@ -575,13 +749,49 @@ def status_check():
 def home():
     """Home endpoint"""
     return jsonify({
-        'message': 'Welcome to LuminaryAI API',
-        'version': '1.0.0',
+        'message': 'Welcome to LuminaryAI API - Intelligent Legal Assistant with Document Management',
+        'version': '2.0.0',
+        'features': {
+            'document_rag': 'Semantic document search and Q&A',
+            'intelligent_agent': 'Autonomous document management via LLM',
+            'role_based': 'Tailored responses for lawyers, students, and public',
+            'indian_law': 'Specialized in Indian legal system',
+            'multi_modal': 'PDF, DOCX, TXT document support'
+        },
         'endpoints': {
-            'auth': '/api/auth/register, /api/auth/login',
-            'documents': '/api/documents/upload, /api/documents',
-            'query': '/api/query',
-            'research': '/api/research/cases'
+            'auth': {
+                'register': 'POST /api/auth/register',
+                'login': 'POST /api/auth/login'
+            },
+            'documents': {
+                'upload': 'POST /api/documents/upload',
+                'list': 'GET /api/documents',
+                'analyze': 'POST /api/documents/analyze'
+            },
+            'query': {
+                'basic': 'POST /api/query (document-aware)',
+                'agent': 'POST /api/agent/query (autonomous agent) 🤖'
+            },
+            'rag': {
+                'add_document': 'POST /api/rag/documents',
+                'search': 'POST /api/rag/search',
+                'query_doc': 'POST /api/rag/documents/<id>/query',
+                'list_docs': 'GET /api/rag/documents',
+                'compare': 'POST /api/rag/documents/compare',
+                'statistics': 'GET /api/rag/statistics'
+            },
+            'research': {
+                'search_cases': 'GET /api/research/cases'
+            },
+            'health': {
+                'check': 'GET /api/health',
+                'status': 'GET /api/status'
+            }
+        },
+        'documentation': {
+            'rag_tool': 'See DOCUMENT_RAG_TOOL.md',
+            'langchain': 'See LANGCHAIN_INTEGRATION.md',
+            'quick_start': 'See QUICK_START_RAG.md'
         }
     }), 200
 

@@ -1,6 +1,14 @@
 """
 Gemini reasoning engine for advanced legal analysis
 """
+import os
+import warnings
+
+# Suppress gRPC/ALTS warnings
+os.environ['GRPC_VERBOSITY'] = 'ERROR'
+os.environ['GLOG_minloglevel'] = '3'
+warnings.filterwarnings('ignore')
+
 import google.generativeai as genai
 from typing import Dict, List, Optional
 from config import Config
@@ -22,65 +30,172 @@ class GeminiReasoningEngine:
             'top_k': 40
         }
     
+    def _chunk_document(self, text: str, chunk_size: int = 2000) -> List[str]:
+        """
+        Split document into chunks for processing
+        
+        Args:
+            text: Document text
+            chunk_size: Maximum characters per chunk
+            
+        Returns:
+            List of text chunks
+        """
+        chunks = []
+        paragraphs = text.split('\n')
+        current_chunk = ""
+        current_length = 0
+        
+        for paragraph in paragraphs:
+            para_length = len(paragraph)
+            
+            if current_length + para_length + 2 <= chunk_size:
+                current_chunk += paragraph + '\n\n'
+                current_length += para_length + 2
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                current_chunk = paragraph + '\n\n'
+                current_length = para_length + 2
+        
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        
+        return chunks
+    
+    def _extract_key_elements(self, document_text: str) -> Dict[str, any]:
+        """
+        Extract key elements from document using Gemini
+        
+        Args:
+            document_text: Full document text
+            
+        Returns:
+            Dictionary of extracted elements
+        """
+        prompt = f"""
+Extract key legal elements from this document and return ONLY valid JSON:
+
+{document_text[:3000]}
+
+Extract:
+{{
+  "document_type": "type of document (contract/agreement/notice/etc)",
+  "parties": ["list of parties involved"],
+  "key_dates": ["important dates mentioned"],
+  "legal_provisions": ["Indian laws/sections referenced"],
+  "obligations": ["key obligations or duties"],
+  "rights": ["key rights mentioned"],
+  "amounts": ["monetary amounts mentioned"],
+  "jurisdiction": "legal jurisdiction"
+}}
+
+Return ONLY the JSON object, no explanation.
+"""
+        
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    'temperature': 0.3,
+                    'max_output_tokens': 1024
+                }
+            )
+            
+            # Try to parse JSON
+            text = response.text.strip()
+            text = text.replace('```json', '').replace('```', '').strip()
+            return json.loads(text)
+        except Exception as e:
+            return {"error": f"Failed to extract elements: {str(e)}"}
+    
     def analyze_legal_document(
         self, 
         document_text: str, 
-        analysis_type: str = "comprehensive"
+        analysis_type: str = "comprehensive",
+        query: Optional[str] = None
     ) -> Dict[str, any]:
         """
-        Perform deep analysis of a legal document
+        Perform deep analysis of a legal document using chunk-based Gemini processing
         
         Args:
             document_text: Text of the legal document
-            analysis_type: Type of analysis (comprehensive, summary, specific)
+            analysis_type: Type of analysis (comprehensive, summary, specific, qa)
+            query: Optional specific question about the document
             
         Returns:
             Analysis results dictionary
         """
-        prompts = {
-            "comprehensive": f"""
-Analyze this legal document comprehensively:
-
-{document_text}
-
-Provide a detailed analysis covering:
-1. Document Type and Purpose
-2. Key Legal Provisions
-3. Rights and Obligations
-4. Potential Issues or Concerns
-5. Relevant Indian Laws
-6. Recommendations
-
-Format your response as JSON with these keys.
-""",
-            "summary": f"""
-Provide a concise summary of this legal document:
-
-{document_text}
-
-Include:
-- Main purpose
-- Key parties
-- Critical terms
-- Important dates
-
-Keep it brief and clear.
-""",
-            "specific": f"""
-Extract specific legal elements from this document:
-
-{document_text}
-
-Identify:
-1. Legal sections/articles referenced
-2. Case law citations
-3. Statutory provisions
-4. Contractual obligations
-5. Jurisdictional information
-"""
-        }
         
-        prompt = prompts.get(analysis_type, prompts["comprehensive"])
+        # For Q&A mode with specific query
+        if analysis_type == "qa" and query:
+            return self._answer_document_question(document_text, query)
+        
+        # Extract key elements first
+        key_elements = self._extract_key_elements(document_text)
+        
+        # Split document into chunks for comprehensive analysis
+        chunks = self._chunk_document(document_text, chunk_size=2000)
+        
+        # Analyze based on type
+        if analysis_type == "comprehensive":
+            return self._comprehensive_analysis(document_text, chunks, key_elements)
+        elif analysis_type == "summary":
+            return self._summary_analysis(document_text, key_elements)
+        elif analysis_type == "specific":
+            return self._specific_analysis(document_text, key_elements)
+        else:
+            return self._comprehensive_analysis(document_text, chunks, key_elements)
+    
+    def _comprehensive_analysis(
+        self, 
+        full_text: str, 
+        chunks: List[str], 
+        key_elements: Dict
+    ) -> Dict[str, any]:
+        """Comprehensive document analysis using Gemini"""
+        
+        prompt = f"""
+As a legal expert specializing in Indian law, provide a comprehensive analysis of this legal document.
+
+KEY ELEMENTS IDENTIFIED:
+{json.dumps(key_elements, indent=2)}
+
+DOCUMENT CONTENT:
+{full_text[:4000]}{'...(truncated)' if len(full_text) > 4000 else ''}
+
+Provide a detailed analysis with these sections:
+
+1. DOCUMENT OVERVIEW
+   - Type and nature of document
+   - Primary purpose
+   - Date and parties involved
+
+2. LEGAL FRAMEWORK
+   - Applicable Indian laws and statutes
+   - Relevant sections and provisions
+   - Legal validity and compliance
+
+3. KEY PROVISIONS ANALYSIS
+   - Main clauses and terms
+   - Rights of each party
+   - Obligations and duties
+   - Conditions and warranties
+
+4. RISK ASSESSMENT
+   - Potential legal risks
+   - Ambiguous or problematic clauses
+   - Missing provisions
+   - Enforceability concerns
+
+5. RECOMMENDATIONS
+   - Suggested actions
+   - Clauses needing attention
+   - Legal precautions
+   - Next steps
+
+Format clearly with headers. Be specific and cite relevant Indian laws.
+"""
         
         try:
             response = self.model.generate_content(
@@ -91,7 +206,163 @@ Identify:
             return {
                 'success': True,
                 'analysis': response.text,
-                'type': analysis_type
+                'type': 'comprehensive',
+                'key_elements': key_elements,
+                'chunks_analyzed': len(chunks)
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def _summary_analysis(self, document_text: str, key_elements: Dict) -> Dict[str, any]:
+        """Generate concise summary"""
+        
+        prompt = f"""
+Provide a concise executive summary of this legal document:
+
+KEY ELEMENTS:
+{json.dumps(key_elements, indent=2)}
+
+DOCUMENT:
+{document_text[:3000]}
+
+Summary should include:
+- Document type and purpose (1-2 sentences)
+- Parties involved
+- Key terms and conditions (bullet points)
+- Important dates and amounts
+- Critical obligations
+- Jurisdiction and applicable law
+
+Keep it clear, concise, and actionable.
+"""
+        
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    'temperature': 0.5,
+                    'max_output_tokens': 1024
+                }
+            )
+            
+            return {
+                'success': True,
+                'analysis': response.text,
+                'type': 'summary',
+                'key_elements': key_elements
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def _specific_analysis(self, document_text: str, key_elements: Dict) -> Dict[str, any]:
+        """Extract specific legal elements"""
+        
+        prompt = f"""
+Extract and list specific legal elements from this document:
+
+{document_text[:3000]}
+
+Provide detailed lists for:
+
+1. STATUTES AND ACTS REFERENCED
+   (List each with full name and relevant sections)
+
+2. CASE LAW CITATIONS
+   (If any precedents are mentioned)
+
+3. LEGAL TERMS AND DEFINITIONS
+   (Key legal terminology used)
+
+4. CONTRACTUAL CLAUSES
+   (Major clauses with brief descriptions)
+
+5. COMPLIANCE REQUIREMENTS
+   (Regulatory or legal compliance needed)
+
+6. DISPUTE RESOLUTION
+   (How disputes are to be resolved)
+
+7. TERMINATION PROVISIONS
+   (Conditions for ending the agreement)
+
+Be precise and cite exact references.
+"""
+        
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config=self.generation_config
+            )
+            
+            return {
+                'success': True,
+                'analysis': response.text,
+                'type': 'specific',
+                'key_elements': key_elements
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def _answer_document_question(self, document_text: str, query: str) -> Dict[str, any]:
+        """
+        Answer specific question about document using Gemini
+        Similar to RAG Q&A approach
+        """
+        
+        # Chunk document
+        chunks = self._chunk_document(document_text, chunk_size=1500)
+        
+        # Find most relevant chunks (simple keyword matching)
+        query_words = set(query.lower().split())
+        chunk_scores = []
+        
+        for i, chunk in enumerate(chunks):
+            chunk_words = set(chunk.lower().split())
+            overlap = len(query_words.intersection(chunk_words))
+            chunk_scores.append((i, overlap, chunk))
+        
+        # Sort by relevance and take top 3 chunks
+        chunk_scores.sort(key=lambda x: x[1], reverse=True)
+        relevant_chunks = [chunk for _, _, chunk in chunk_scores[:3]]
+        context = "\n\n---\n\n".join(relevant_chunks)
+        
+        prompt = f"""
+Based on the following document excerpts, answer the question accurately and concisely.
+
+DOCUMENT EXCERPTS:
+{context}
+
+QUESTION: {query}
+
+Provide a clear answer based ONLY on the document content. If the information is not in the document, state that clearly. Cite specific parts of the document when possible.
+
+ANSWER:
+"""
+        
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    'temperature': 0.4,
+                    'max_output_tokens': 1024
+                }
+            )
+            
+            return {
+                'success': True,
+                'analysis': response.text,
+                'type': 'qa',
+                'query': query,
+                'chunks_used': len(relevant_chunks)
             }
         except Exception as e:
             return {
