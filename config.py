@@ -14,18 +14,19 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 
 load_dotenv()
 
-class Config:
+class Config(object):
     """Base configuration"""
     
     # Flask Configuration
-    SECRET_KEY = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
+    SECRET_KEY = os.getenv('JWT_SECRET', 'replace-me')
     FLASK_ENV = os.getenv('FLASK_ENV', 'development')
     FLASK_PORT = int(os.getenv('FLASK_PORT', 5000))
     
     # JWT Configuration
-    JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
+    JWT_SECRET = os.getenv('JWT_SECRET', 'replace-me')
     JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')
     JWT_EXPIRATION_HOURS = int(os.getenv('JWT_EXPIRATION_HOURS', 24))
+    TOKEN_EXPIRE_MINUTES = int(os.getenv('TOKEN_EXPIRE_MINUTES', 120))
     
     # API Keys
     GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
@@ -33,7 +34,7 @@ class Config:
     
     # Database Configuration
     DATABASE_TYPE = os.getenv('DATABASE_TYPE', 'sqlite')
-    DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///luminary.db')
+    DB_URL = os.getenv('DATABASE_URL', 'sqlite:///luminary.db')
     
     # Firebase Configuration
     FIREBASE_CREDENTIALS_PATH = os.getenv('FIREBASE_CREDENTIALS_PATH')
@@ -49,8 +50,8 @@ class Config:
     FERNET_KEY = os.getenv('FERNET_KEY')
     
     # Model Configuration
-    EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'models/embedding-004')
-    LLM_MODEL = os.getenv('LLM_MODEL', 'gemini-pro')
+    EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'gemini-embedding-001')
+    LLM_MODEL = os.getenv('LLM_MODEL', 'models/gemma-3-12b-it')
     TEMPERATURE = float(os.getenv('TEMPERATURE', 0.7))
     MAX_TOKENS = int(os.getenv('MAX_TOKENS', 2048))
     
@@ -65,6 +66,24 @@ class Config:
     # Streamlit Configuration
     STREAMLIT_SERVER_PORT = int(os.getenv('STREAMLIT_SERVER_PORT', 8501))
     STREAMLIT_SERVER_ADDRESS = os.getenv('STREAMLIT_SERVER_ADDRESS', 'localhost')
+    
+    # Logging Configuration
+    LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+    LOG_FILE = os.getenv('LOG_FILE', 'logs/luminary.log')
+    
+    # Rate Limiting
+    RATE_LIMIT_ENABLED = os.getenv('RATE_LIMIT_ENABLED', 'True') == 'True'
+    RATE_LIMIT_PER_MINUTE = int(os.getenv('RATE_LIMIT_PER_MINUTE', 60))
+    RATE_LIMIT_PER_HOUR = int(os.getenv('RATE_LIMIT_PER_HOUR', 2000))
+    
+    # Health Check
+    HEALTH_CHECK_ENABLED = os.getenv('HEALTH_CHECK_ENABLED', 'True') == 'True'
+    
+    # Database URL
+    DB_URL = os.getenv('DB_URL', 'sqlite:///luminary.db')
+    # ChromaDB settings
+    CHROMA_COLLECTION = os.getenv('CHROMA_COLLECTION', 'luminary_docs')
+    CHROMA_DIRECTORY = os.getenv('CHROMA_DIRECTORY', 'chromadb_storage')
 
 class DevelopmentConfig(Config):
     """Development configuration"""

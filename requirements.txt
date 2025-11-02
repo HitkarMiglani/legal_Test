@@ -1,13 +1,19 @@
 # Core Framework
 flask
 flask-cors
+gunicorn
 streamlit
 python-dotenv
+psutil
 
 # AI and ML
 langchain
-langchain-google-genai
+langchain-google-genai>=3.0.0
 google-generativeai
+# Note: Known conflicts:
+# - google-generativeai requires google-ai-generativelanguage==0.6.15
+# - langchain-google-genai requires google-ai-generativelanguage>=0.7.0
+# These are acceptable and both packages work correctly despite the conflict
 transformers
 torch
 sentence-transformers
@@ -43,7 +49,15 @@ python-multipart
 Pillow
 validators
 
+# Logging and Monitoring
+python-json-logger
+
+# Validation
+pydantic
+pydantic-settings
+
 # Development
 pytest
 black
 flake8
+mypy

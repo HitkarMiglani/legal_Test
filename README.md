@@ -70,7 +70,14 @@ All through a Streamlit-based frontend and Flask-powered backend with **9 intell
 - Memory Manager
 - UI Display Manager
 
-## 🧩 Installation
+## 🧩 Installation & Setup
+
+### Prerequisites
+
+- Python 3.11 or higher
+- pip package manager
+- Virtual environment (recommended)
+- Google Gemini API key ([Get it here](https://makersuite.google.com/app/apikey))
 
 ### Quick Setup (Recommended)
 
@@ -79,25 +86,63 @@ All through a Streamlit-based frontend and Flask-powered backend with **9 intell
 .\setup.ps1
 ```
 
-Or manually:
+### Manual Setup
+
+#### 1. Create Virtual Environment
 
 ```powershell
+# Windows
 python -m venv venv
 .\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python -c "from models import init_db; init_db()"
+
+# Linux/Mac
+python -m venv venv
+source venv/bin/activate
 ```
 
-### Configure API Keys
+#### 2. Install Dependencies
 
-1. Copy `.env.example` to `.env`
-2. Add your Google Gemini API key: https://makersuite.google.com/app/apikey
-3. Generate Fernet key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+```powershell
+pip install -r requirements.txt
+```
+
+#### 3. Configure Environment
+
+```powershell
+# Copy environment template
+cp env.example .env
+
+# Edit .env and add your API keys
+nano .env  # or use your preferred editor
+```
+
+**Required Environment Variables:**
+```env
+GOOGLE_API_KEY=your_gemini_api_key_here
+FLASK_SECRET_KEY=generate-random-string
+JWT_SECRET_KEY=generate-random-string
+FERNET_KEY=generate-fernet-key
+```
+
+**Generate Keys:**
+```bash
+# Generate Fernet key
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# Generate secret keys (use openssl or random string)
+openssl rand -hex 32
+```
+
+#### 4. Initialize Database
+
+```powershell
+python -c "from models import init_db; init_db()"
+```
 
 ### Verify Setup
 
 ```powershell
-python test_setup.py
+python test_suite.py
 ```
 
 ## ⚙️ Run
@@ -131,13 +176,24 @@ python test_suite.py --test langchain
 python test_suite.py --test app
 ```
 
-## 🎯 Key Features & Guides
+## 🚀 Quick Deployment (Docker)
 
-- **[Query Reiteration & Role Context](QUERY_REITERATION.md)** - Automatic query enhancement with role-based responses
-- **[Query Validation & Semantic Answers](QUERY_VALIDATION.md)** - Smart query validation with short/detailed response modes
-- **[Setup Guide](SETUP.md)** - Detailed installation instructions
-- **[Quick Start](QUICKSTART.md)** - Get started in 5 minutes
-- **[Troubleshooting](TROUBLESHOOTING.md)** - Common issues and solutions
+```bash
+# Copy environment file
+cp env.example .env
+
+# Edit .env and add API keys
+nano .env
+
+# Start all services
+docker-compose up -d
+
+# Access
+# Frontend: http://localhost:8501
+# Backend: http://localhost:5000
+```
+
+For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md)
 
 ## 📁 Project Structure
 
@@ -147,7 +203,7 @@ LuminaryAI/
 ├── main.py                     # Streamlit frontend
 ├── config.py                   # Configuration management
 ├── models.py                   # Database models (SQLAlchemy)
-├── utils.py                    # Utility functions
+├── utils/                      # Utility modules (logger, exceptions, middleware)
 ├── requirements.txt            # Python dependencies
 ├── .env.example               # Environment template
 ├── setup.ps1                  # Windows setup script
@@ -170,10 +226,9 @@ LuminaryAI/
 ## 📚 Documentation
 
 - **[DOCUMENTATION.md](DOCUMENTATION.md)** - Complete API reference, usage examples, architecture
-- **[PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)** - Project structure and file organization
-- **[DOCUMENT_RAG_TOOL.md](DOCUMENT_RAG_TOOL.md)** - RAG pipeline technical docs
-- **[LANGCHAIN_INTEGRATION.md](LANGCHAIN_INTEGRATION.md)** - LangChain agent guide
-- **[SETUP.md](SETUP.md)** - Detailed setup instructions
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Production deployment guide (Docker, manual, scaling)
+- **[DOCUMENT_RAG_TOOL.md](DOCUMENT_RAG_TOOL.md)** - RAG pipeline technical documentation
+- **[LANGCHAIN_INTEGRATION.md](LANGCHAIN_INTEGRATION.md)** - LangChain agent integration guide
 
 ## 🎯 Quick Reference
 

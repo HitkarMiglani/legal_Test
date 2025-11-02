@@ -8,6 +8,7 @@ import hashlib
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import google.generativeai as genai
+from sentence_transformers import SentenceTransformer
 from config import Config
 
 class DocumentRAGTool:
@@ -32,10 +33,17 @@ class DocumentRAGTool:
         os.makedirs(self.docs_path, exist_ok=True)
         os.makedirs(self.chunks_path, exist_ok=True)
         
-        # Initialize Gemini
+        # Initialize Gemini (for LLM generation only)
         genai.configure(api_key=Config.GOOGLE_API_KEY)
         self.model = genai.GenerativeModel(Config.LLM_MODEL)
-        self.embedding_model = 'models/embedding-001'
+        
+        # Initialize SBERT for embeddings (local, no API needed)
+        # Using 'all-MiniLM-L6-v2' - a fast, lightweight model good for semantic search
+        # Alternative models: 'all-mpnet-base-v2' (better quality, slower) or 
+        # 'paraphrase-multilingual-MiniLM-L12-v2' (for multilingual support)
+        embedding_model_name = os.getenv('SBERT_MODEL', 'all-MiniLM-L6-v2')
+        self.embedding_model = SentenceTransformer(embedding_model_name)
+        print(f"✅ SBERT embedding model '{embedding_model_name}' loaded successfully")
         
         # Load or create index
         self.index = self._load_index()
@@ -101,14 +109,16 @@ class DocumentRAGTool:
         return chunks
     
     def _generate_embedding(self, text: str) -> List[float]:
-        """Generate embedding for text using Gemini"""
+        """Generate embedding for text using SBERT (Sentence-BERT)"""
         try:
-            result = genai.embed_content(
-                model=self.embedding_model,
-                content=text,
-                task_type="retrieval_document"
+            # SBERT automatically handles tokenization and encoding
+            # Returns a numpy array, convert to list
+            embedding = self.embedding_model.encode(
+                text,
+                convert_to_numpy=True,
+                normalize_embeddings=True  # Normalize for cosine similarity
             )
-            return result['embedding']
+            return embedding.tolist()
         except Exception as e:
             print(f"Embedding error: {str(e)}")
             return []
@@ -228,12 +238,23 @@ class DocumentRAGTool:
         Returns:
             Search results with relevant chunks
         """
-        # Generate query embedding
-        query_embedding = genai.embed_content(
-            model=self.embedding_model,
-            content=query,
-            task_type="retrieval_query"
-        )['embedding']
+        # Generate query embedding using SBERT
+        try:
+            query_embedding = self.embedding_model.encode(
+                query,
+                convert_to_numpy=True,
+                normalize_embeddings=True  # Normalize for cosine similarity
+            ).tolist()
+        except Exception as e:
+            print(f"Query embedding error: {str(e)}")
+            return {
+                "success": False,
+                "query": query,
+                "results_count": 0,
+                "total_searched": 0,
+                "results": [],
+                "error": str(e)
+            }
         
         # Score all chunks
         results = []

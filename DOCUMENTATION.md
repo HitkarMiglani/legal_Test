@@ -216,7 +216,73 @@ GET /api/rag/statistics
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture & Project Structure
+
+### Project Structure
+
+```
+Agentic_Law_AI/
+├── Core Application
+│   ├── app.py              # Flask backend (900+ lines) - 16+ API endpoints
+│   ├── main.py             # Streamlit frontend (480+ lines)
+│   ├── config.py           # Configuration management
+│   └── models.py           # SQLAlchemy database models
+│
+├── modules/                # Core modules
+│   ├── auth.py            # JWT authentication
+│   ├── document_processor.py  # PDF/DOCX/TXT processing
+│   ├── document_rag_chromadb.py  # ChromaDB RAG implementation
+│   ├── document_rag_langchain.py # LangChain tool wrappers
+│   ├── document_rag_routes.py    # RAG API endpoints
+│   ├── document_rag_tool.py      # Core RAG pipeline
+│   ├── legal_retriever.py        # Indian Kanoon API
+│   ├── memory_manager.py         # User context/memory
+│   ├── orchestrator.py           # LangChain orchestration
+│   └── reasoning_engine.py       # Gemini document analysis
+│
+├── utils/                  # Utility modules
+│   ├── logger.py          # Structured logging
+│   ├── exceptions.py      # Custom exceptions
+│   └── middleware.py      # Request middleware
+│
+├── Storage
+│   ├── luminary.db        # SQLite database
+│   ├── uploads/           # User-uploaded documents
+│   ├── chromadb_storage/  # ChromaDB vector storage
+│   └── document_storage/  # RAG document storage (JSON)
+│
+└── Documentation
+    ├── README.md          # Project overview
+    ├── DOCUMENTATION.md   # This file
+    ├── DEPLOYMENT.md      # Deployment guide
+    ├── DOCUMENT_RAG_TOOL.md    # RAG technical guide
+    └── LANGCHAIN_INTEGRATION.md # Agent integration guide
+```
+
+### Module Descriptions
+
+**Core Application:**
+- `app.py` - Flask backend with 16+ API endpoints, authentication, RAG integration, agent endpoint
+- `main.py` - Streamlit frontend UI with chat, document upload, query interface
+- `config.py` - Environment-based configuration management
+- `models.py` - SQLAlchemy ORM models (User, Document, Query, Analysis, Memory, LegalCase)
+
+**Core Modules:**
+- `auth.py` - JWT authentication, password hashing, token validation, role-based access
+- `document_processor.py` - PDF/DOCX/TXT extraction, text cleaning, chunking
+- `document_rag_chromadb.py` - ChromaDB-based RAG with local embeddings
+- `document_rag_tool.py` - Core RAG pipeline with 9 methods
+- `document_rag_langchain.py` - 9 LangChain tool wrappers for autonomous agent
+- `document_rag_routes.py` - Flask API routes for RAG operations
+- `legal_retriever.py` - Indian Kanoon API integration for case law
+- `memory_manager.py` - User memory, preferences, context building
+- `orchestrator.py` - LangChain chain creation and orchestration
+- `reasoning_engine.py` - Gemini-based document analysis, query validation
+
+**Utilities:**
+- `utils/logger.py` - Structured JSON logging with request tracking
+- `utils/exceptions.py` - Custom exception hierarchy
+- `utils/middleware.py` - Request logging, security headers, rate limiting
 
 ### System Components
 
@@ -486,35 +552,41 @@ python test_suite.py --test direct     # Direct tool usage
 
 ## 🚀 Deployment
 
-### Development
-
-```bash
-python app.py  # Flask debug mode
-streamlit run main.py
-```
-
-### Production
-
-```bash
-# Use production WSGI server
-gunicorn -w 4 -b 0.0.0.0:5000 app:app
-
-# Or
-waitress-serve --port=5000 app:app
-```
-
-### Docker (Optional)
-
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-CMD ["python", "app.py"]
-```
+See [DEPLOYMENT.md](DEPLOYMENT.md) for comprehensive deployment guide including:
+- Docker deployment (recommended)
+- Manual deployment with Gunicorn
+- Production configuration
+- Scaling strategies
+- Monitoring and health checks
 
 ---
+
+## 🛠️ Utility Scripts
+
+### Loading Local Documents
+
+Use `load_local_documents.py` to batch load documents from a folder:
+
+```bash
+# Load all documents from a folder
+python load_local_documents.py "path/to/documents"
+
+# Load without recursive search
+python load_local_documents.py "path/to/documents" --no-recursive
+
+# List all loaded documents
+python load_local_documents.py --list
+
+# Search loaded documents
+python load_local_documents.py --search "query"
+```
+
+**What it does:**
+- Scans folder for PDF, DOCX, TXT files
+- Extracts text from each document
+- Generates embeddings (locally)
+- Stores in ChromaDB
+- Makes documents searchable via API
 
 ## 🔗 Tech Stack
 
@@ -523,12 +595,13 @@ CMD ["python", "app.py"]
 | **Frontend**        | Streamlit               |
 | **Backend**         | Flask                   |
 | **AI/LLM**          | Gemini Pro (gemini-pro) |
-| **Embeddings**      | Gemini (embedding-001)  |
+| **Embeddings**      | sentence-transformers (local), ChromaDB |
 | **Agent Framework** | LangChain               |
-| **Database**        | SQLite                  |
+| **Database**        | SQLite (dev), PostgreSQL (prod) |
+| **Cache**           | Redis (optional)        |
 | **Auth**            | JWT, bcrypt             |
 | **Doc Processing**  | pdfminer, docx2txt      |
-| **Vector Storage**  | JSON (file-based)       |
+| **Vector Storage**  | ChromaDB                |
 
 ---
 

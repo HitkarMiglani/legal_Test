@@ -95,7 +95,7 @@ def test_gemini_reasoning_engine():
         print("\n  Testing document analysis...")
         result = engine.analyze_legal_document(
             RENTAL_AGREEMENT,
-            analysis_mode="summary"
+            analysis_type="summary"
         )
         
         if result.get('success'):

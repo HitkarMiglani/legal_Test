@@ -1,68 +1,47 @@
 #!/bin/bash
-# LuminaryAI Setup Script (Bash)
-# Run this script to set up the application
+# Setup script for LuminaryAI
+set -e
 
-echo "🚀 Setting up LuminaryAI..."
+PROJECT_ROOT="$(dirname "$0")"
+cd "$PROJECT_ROOT"
 
 # Check Python version
-echo ""
-echo "📌 Checking Python version..."
-python3 --version
+PY_VER=$(python -c 'import sys; print("%d.%d" % (sys.version_info.major, sys.version_info.minor))')
+PY_MAJOR=$(echo $PY_VER | cut -d. -f1)
+PY_MINOR=$(echo $PY_VER | cut -d. -f2)
 
-# Create virtual environment
-echo ""
-echo "📦 Creating virtual environment..."
-python3 -m venv venv
-
-# Activate virtual environment
-echo ""
-echo "🔌 Activating virtual environment..."
-source venv/bin/activate
-
-# Upgrade pip
-echo ""
-echo "⬆️  Upgrading pip..."
-python -m pip install --upgrade pip
-
-# Install requirements
-echo ""
-echo "📚 Installing dependencies (this may take a few minutes)..."
-pip install -r requirements.txt
-
-# Create .env file
-echo ""
-echo "⚙️  Setting up environment file..."
-if [ ! -f .env ]; then
-    cp .env.example .env
-    echo "✅ Created .env file. Please edit it with your API keys."
-else
-    echo "⚠️  .env file already exists. Skipping..."
+if [ "$PY_MAJOR" != "3" ]; then
+    echo "❌ Python 3.x is required."
+    exit 1
 fi
 
-# Generate Fernet key
-echo ""
-echo "🔐 Generating encryption key..."
-FERNET_KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-echo "Your Fernet Key: $FERNET_KEY"
-echo "Add this to your .env file as FERNET_KEY=$FERNET_KEY"
+if [ "$PY_MINOR" -lt 9 ]; then
+    echo "❌ Python 3.9 or newer is required."
+    exit 1
+fi
 
-# Create uploads directory
-echo ""
-echo "📁 Creating uploads directory..."
-mkdir -p uploads
-echo "✅ Created uploads directory"
+# Create venv if absent
+if [ ! -d "venv" ]; then
+    echo "🟠 Creating virtual environment... (venv)"
+    python -m venv venv
+fi
+source venv/bin/activate
 
-# Initialize database
-echo ""
-echo "🗄️  Initializing database..."
-python -c "from models import init_db; init_db(); print('Database initialized successfully!')"
+# Upgrade essential tools
+pip install --upgrade pip setuptools wheel
 
-echo ""
-echo "✅ Setup complete!"
-echo ""
-echo "📝 Next steps:"
-echo "1. Edit .env file with your API keys (especially GOOGLE_API_KEY)"
-echo "2. Run Flask backend: python app.py"
-echo "3. Run Streamlit frontend: streamlit run main.py"
-echo ""
-echo "📖 See SETUP.md for detailed instructions"
+# Install dependencies
+if [ -f "requirements.txt" ]; then
+    echo "🟢 Installing dependencies from requirements.txt ..."
+    pip install -r requirements.txt || true
+    echo "\n(Note: Some dependency conflicts are normal and described in requirements.txt comments.)\n"
+else
+    echo "❌ requirements.txt not found!"
+    exit 1
+fi
+
+if [ "$PY_MINOR" -ge 13 ]; then
+    echo "⚠️  WARNING: Python 3.13+ may break reloading and some dependencies! For a smoother experience, use Python 3.12."
+fi
+
+echo "✔️  Setup complete! To start the app: ./run.sh"

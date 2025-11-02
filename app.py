@@ -10,7 +10,7 @@ os.environ['GRPC_VERBOSITY'] = 'ERROR'
 os.environ['GLOG_minloglevel'] = '2'
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, g
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -22,17 +22,35 @@ from modules.legal_retriever import LegalRetriever
 from modules.memory_manager import MemoryManager
 from modules.orchestrator import LangChainOrchestrator
 from modules.reasoning_engine import GeminiReasoningEngine
-from modules.document_rag_chromadb import ChromaDBRAGTool  # NEW: ChromaDB instead of Gemini embeddings
+from modules.document_rag_chromadb import ChromaDBRAGTool
 from modules.document_rag_langchain import create_document_rag_tools
 from modules.document_rag_routes import rag_bp
+
+# Import utilities
+from utils.logger import logger, setup_logger
+from utils.exceptions import (
+    LuminaryException,
+    ValidationError,
+    NotFoundError,
+    AIServiceError,
+    DocumentProcessingError
+)
+from utils.middleware import request_logging_middleware
+
+# Setup logger
+logger = setup_logger('luminary', Config.LOG_LEVEL, Config.LOG_FILE)
 
 # Initialize Flask app
 app = Flask(__name__)
 app.config.from_object(config['development'])
 CORS(app)
 
+# Apply middleware
+# Note: request_logging_middleware includes global exception handler
+request_logging_middleware(app)
+
 # Initialize database
-engine = init_db(app.config['DATABASE_URL'])
+engine = init_db(app.config['DB_URL'])
 
 # Initialize modules with error handling
 doc_processor = DocumentProcessor(app.config['UPLOAD_FOLDER'])
@@ -52,21 +70,21 @@ try:
         rag_tool = ChromaDBRAGTool(storage_path="chromadb_storage", model_name="all-MiniLM-L6-v2")
         langchain_tools = create_document_rag_tools(rag_tool=rag_tool)
         
-        print("✓ AI modules initialized successfully")
-        print(f"✓ Document RAG Tool initialized with {len(langchain_tools)} LangChain tools")
+        logger.info("AI modules initialized successfully")
+        logger.info(f"Document RAG Tool initialized with {len(langchain_tools)} LangChain tools")
     else:
-        print("⚠ Warning: GOOGLE_API_KEY not configured. AI features will be limited.")
-        print("  Please set your API key in the .env file.")
+        logger.warning("GOOGLE_API_KEY not configured. AI features will be limited.")
+        logger.warning("Please set your API key in the .env file.")
 except Exception as e:
-    print(f"⚠ Warning: Failed to initialize AI modules: {str(e)}")
-    print("  The application will run with limited functionality.")
+    logger.error(f"Failed to initialize AI modules: {str(e)}", exc_info=True)
+    logger.warning("The application will run with limited functionality.")
 
 # Ensure upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Register Document RAG API routes
 app.register_blueprint(rag_bp)
-print("✓ Document RAG API routes registered at /api/rag/*")
+logger.info("Document RAG API routes registered at /api/rag/*")
 
 # ============== Authentication Routes ==============
 
@@ -600,20 +618,85 @@ def get_case(case_id):
 
 # ============== Health Check ==============
 
-@app.route('/api/health', methods=['GET'])
+@app.route('/api/health')
 def health_check():
-    """Health check endpoint"""
-    return jsonify({
+    """Comprehensive health check endpoint"""
+    import time
+    import psutil
+    
+    health_status = {
         'status': 'healthy',
         'service': 'LuminaryAI',
-        'version': '1.0.0',
-        'ai_modules': {
-            'reasoning_engine': reasoning_engine is not None,
-            'orchestrator': orchestrator is not None,
-            'rag_tool': rag_tool is not None,
-            'api_key_configured': bool(Config.GOOGLE_API_KEY and Config.GOOGLE_API_KEY != 'your_gemini_api_key_here')
+        'version': '2.0.0',
+        'timestamp': datetime.utcnow().isoformat(),
+        'checks': {}
+    }
+    
+    overall_healthy = True
+    
+    # Database check
+    try:
+        from sqlalchemy import text
+        session = get_session(engine)
+        session.execute(text('SELECT 1'))
+        session.close()
+        health_status['checks']['database'] = {'status': 'healthy', 'message': 'Connected'}
+    except Exception as e:
+        health_status['checks']['database'] = {'status': 'unhealthy', 'message': str(e)}
+        overall_healthy = False
+    
+    # AI modules check
+    ai_modules_status = {
+        'reasoning_engine': reasoning_engine is not None,
+        'orchestrator': orchestrator is not None,
+        'rag_tool': rag_tool is not None,
+        'langchain_tools': langchain_tools is not None and len(langchain_tools) > 0 if langchain_tools else False,
+        'api_key_configured': bool(Config.GOOGLE_API_KEY and Config.GOOGLE_API_KEY != 'your_gemini_api_key_here')
+    }
+    health_status['checks']['ai_modules'] = ai_modules_status
+    
+    if not ai_modules_status['api_key_configured']:
+        health_status['checks']['ai_modules']['status'] = 'degraded'
+        health_status['checks']['ai_modules']['message'] = 'API key not configured'
+    
+    # Storage check
+    try:
+        import os
+        uploads_exists = os.path.exists(app.config['UPLOAD_FOLDER'])
+        health_status['checks']['storage'] = {
+            'status': 'healthy' if uploads_exists else 'unhealthy',
+            'uploads_folder': uploads_exists,
+            'message': 'Storage accessible' if uploads_exists else 'Uploads folder missing'
         }
-    }), 200
+        if not uploads_exists:
+            overall_healthy = False
+    except Exception as e:
+        health_status['checks']['storage'] = {'status': 'unhealthy', 'message': str(e)}
+        overall_healthy = False
+    
+    # System resources
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        health_status['checks']['system'] = {
+            'status': 'healthy',
+            'cpu_percent': cpu_percent,
+            'memory_percent': memory.percent,
+            'memory_available_mb': round(memory.available / 1024 / 1024, 2)
+        }
+        if cpu_percent > 90 or memory.percent > 90:
+            health_status['checks']['system']['status'] = 'warning'
+            overall_healthy = False
+    except ImportError:
+        health_status['checks']['system'] = {'status': 'unknown', 'message': 'psutil not available'}
+    except Exception as e:
+        health_status['checks']['system'] = {'status': 'error', 'message': str(e)}
+    
+    health_status['status'] = 'healthy' if overall_healthy else 'degraded'
+    
+    status_code = 200 if overall_healthy else 503
+    
+    return jsonify(health_status), status_code
 
 @app.route('/api/agent/query', methods=['POST'])
 @auth_manager.token_required
@@ -638,8 +721,7 @@ def agent_query():
         user_id = request.current_user['user_id']
         user_role = request.current_user['role']
         
-        # Import LangChain agent components
-        from langchain.agents import AgentExecutor, create_react_agent
+        from langchain_classic.agents import AgentExecutor,create_react_agent
         from langchain_classic.prompts import PromptTemplate
         from langchain_google_genai import ChatGoogleGenerativeAI
         
@@ -661,30 +743,30 @@ def agent_query():
         # Create prompt template
         template = f"""You are LuminaryAI, an intelligent legal assistant specializing in Indian law.
 
-{context}
+    {context}
 
-You have access to document management tools that allow you to:
-- Add documents to the knowledge base
-- Search for relevant information across documents
-- Query specific documents for answers
-- Compare documents
-- List and manage documents
+    You have access to document management tools that allow you to:
+    - Add documents to the knowledge base
+    - Search for relevant information across documents
+    - Query specific documents for answers
+    - Compare documents
+    - List and manage documents
 
-Available tools:
-{{tools}}
+    Available tools:
+    {{tools}}
 
-Tool names: {{tool_names}}
+    Tool names: {{tool_names}}
 
-Always:
-1. Think step-by-step about what tools you need
-2. Use tools when document operations are mentioned
-3. Provide accurate, source-based answers
-4. Be clear about document IDs when referencing specific documents
-5. Cite sources from documents when answering
+    Always:
+    1. Think step-by-step about what tools you need
+    2. Use tools when document operations are mentioned
+    3. Provide accurate, source-based answers
+    4. Be clear about document IDs when referencing specific documents
+    5. Cite sources from documents when answering
 
-User Question: {{input}}
+    User Question: {{input}}
 
-{{agent_scratchpad}}"""
+    {{agent_scratchpad}}"""
 
         prompt = PromptTemplate.from_template(template)
         
@@ -694,7 +776,6 @@ User Question: {{input}}
             agent=agent,
             tools=langchain_tools,
             verbose=verbose,
-            max_iterations=15,
             handle_parsing_errors=True,
             early_stopping_method="generate"
         )
@@ -712,9 +793,19 @@ User Question: {{input}}
         }), 200
         
     except Exception as e:
-        print(f"Agent error: {str(e)}")
+        logger.error(
+            f"Agent execution failed: {str(e)}",
+            extra={
+                'user_id': request.current_user.get('user_id') if hasattr(request, 'current_user') else None,
+                'query': query,
+                'endpoint': 'agent_query'
+            },
+            exc_info=True
+        )
         return jsonify({
-            'error': f'Agent execution failed: {str(e)}'
+            'error': 'AGENT_EXECUTION_ERROR',
+            'message': 'Agent execution failed. Please try again.',
+            'request_id': getattr(g, 'request_id', 'unknown')
         }), 500
 
 @app.route('/api/status', methods=['GET'])
@@ -796,8 +887,13 @@ def home():
     }), 200
 
 if __name__ == '__main__':
+    # Disable reloader on Python 3.13+ due to TensorFlow compatibility issues
+    import sys
+    use_reloader = app.config['DEBUG'] and sys.version_info < (3, 13)
+    
     app.run(
         host='0.0.0.0',
         port=app.config['FLASK_PORT'],
-        debug=app.config['DEBUG']
+        debug=app.config['DEBUG'],
+        use_reloader=use_reloader
     )

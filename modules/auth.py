@@ -12,7 +12,7 @@ class AuthManager:
     """Handle user authentication and authorization"""
     
     def __init__(self):
-        self.secret_key = Config.JWT_SECRET_KEY
+        self.secret_key = Config.JWT_SECRET
         self.algorithm = Config.JWT_ALGORITHM
         self.expiration_hours = Config.JWT_EXPIRATION_HOURS
     
