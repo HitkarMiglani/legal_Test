@@ -49,6 +49,9 @@ CORS(app)
 # Note: request_logging_middleware includes global exception handler
 request_logging_middleware(app)
 
+# Import uuid for generating document IDs
+import uuid
+
 # Initialize database
 engine = init_db(app.config['DB_URL'])
 
@@ -217,29 +220,50 @@ def upload_document():
         # Get user info
         user_id = request.current_user['user_id']
         
-        # Create document record
+        # Generate unique document ID (UUID)
+        doc_id = str(uuid.uuid4())
+        
+        # Create document record in database
         session = get_session(engine)
         
         new_doc = Document(
+            doc_id=doc_id,
             user_id=user_id,
             filename=filename,
             file_type=file_ext,
             file_path=file_path,
-            processed='processing'
+            processed='processing',
         )
         
         session.add(new_doc)
         session.commit()
-        doc_id = new_doc.id
         session.close()
         
         # Process document (in background in production)
         try:
             result = doc_processor.process_document(file_path, file_ext)
             
+            # Add to RAG system (ChromaDB) if available
+            if rag_tool:
+                try:
+                    rag_result = rag_tool.add_document(
+                        content=result['text'],
+                        title=filename,
+                        metadata={
+                            'file_type': file_ext,
+                            'user_id': user_id,
+                            'uploaded_at': datetime.utcnow().isoformat()
+                        },
+                        doc_id=doc_id  # Use the UUID from database
+                    )
+                    logger.info(f"Document {doc_id} added to RAG system: {rag_result.get('success', False)}")
+                except Exception as rag_error:
+                    logger.error(f"Failed to add document to RAG system: {str(rag_error)}")
+                    # Continue even if RAG fails
+            
             # Update document status
             session = get_session(engine)
-            doc = session.query(Document).get(doc_id)
+            doc = session.query(Document).filter_by(doc_id=doc_id).first()
             doc.processed = 'completed'
             session.commit()
             session.close()
@@ -252,7 +276,7 @@ def upload_document():
             
         except Exception as e:
             session = get_session(engine)
-            doc = session.query(Document).get(doc_id)
+            doc = session.query(Document).filter_by(doc_id=doc_id).first()
             doc.processed = 'failed'
             session.commit()
             session.close()
@@ -262,26 +286,27 @@ def upload_document():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/documents/<int:doc_id>/analyze', methods=['POST'])
+@app.route('/api/documents/<doc_id>/analyze', methods=['POST'])
 @auth_manager.token_required
 def analyze_document(doc_id):
     """Analyze a document using enhanced Gemini-only processing"""
     try:
         data = request.get_json() or {}
-        query = data.get('query', None)
-        analysis_type = data.get('type', 'comprehensive')  # comprehensive, summary, specific, qa
+        query = data.get('query', "Summarize the Document")
+        analysis_type = data.get('type', 'qa')  # comprehensive, summary, specific, qa
         
         user_id = request.current_user['user_id']
         user_role = request.current_user['role']
         
         session = get_session(engine)
         
-        # Get document
-        doc = session.query(Document).filter_by(id=doc_id, user_id=user_id).first()
+        # Get document by doc_id (UUID)
+        doc = session.query(Document).filter_by(doc_id=doc_id, user_id=user_id).first()
         
+        print(doc,Document)
         if not doc:
             session.close()
-            return jsonify({'error': 'Document not found'}), 404
+            return jsonify({'error': 'Document not found'}), 400
         
         # Check if Gemini reasoning engine is available
         if not reasoning_engine:
@@ -294,6 +319,8 @@ def analyze_document(doc_id):
         result = doc_processor.process_document(doc.file_path, doc.file_type)
         document_text = result['text']
         document_metadata = result['metadata']
+        
+        
         
         # Perform enhanced Gemini-based analysis
         try:
@@ -363,7 +390,8 @@ def list_documents():
         docs = session.query(Document).filter_by(user_id=user_id).all()
         
         documents = [{
-            'id': doc.id,
+            'id': doc.doc_id,
+            'doc_id': doc.doc_id,
             'filename': doc.filename,
             'file_type': doc.file_type,
             'uploaded_at': doc.uploaded_at.isoformat(),
@@ -373,6 +401,37 @@ def list_documents():
         session.close()
         
         return jsonify({'documents': documents}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/documents/<doc_id>', methods=['GET'])
+@auth_manager.token_required
+def get_document(doc_id):
+    """Get specific document by doc_id"""
+    try:
+        user_id = request.current_user['user_id']
+        
+        session = get_session(engine)
+        doc = session.query(Document).filter_by(doc_id=doc_id, user_id=user_id).first()
+        
+        if not doc:
+            session.close()
+            return jsonify({'error': 'Document not found'}), 404
+        
+        document = {
+            'id': doc.doc_id,
+            'doc_id': doc.doc_id,
+            'filename': doc.filename,
+            'file_type': doc.file_type,
+            'uploaded_at': doc.uploaded_at.isoformat(),
+            'processed': doc.processed,
+            'file_path': doc.file_path
+        }
+        
+        session.close()
+        
+        return jsonify(document), 200
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -702,111 +761,369 @@ def health_check():
 @auth_manager.token_required
 def agent_query():
     """
-    Intelligent agent endpoint - LLM autonomously decides which tools to use
-    Handles document management, search, and analysis automatically
+    LangGraph-based intelligent agent endpoint
+    Uses state-based graph workflow for autonomous tool selection and execution
     """
+    session = None
     try:
+        # Validate availability
         if not langchain_tools or not orchestrator:
             return jsonify({
                 'error': 'Agent not available. Please configure GOOGLE_API_KEY and restart.'
             }), 503
         
+        # Parse request
         data = request.get_json()
-        query = data.get('query')
+        query_text = data.get('query')
+        max_iterations = data.get('max_iterations', 10)
         verbose = data.get('verbose', False)
+        stream = data.get('stream', False)  # Future: streaming support
         
-        if not query:
+        if not query_text:
             return jsonify({'error': 'Query is required'}), 400
+        
+        if len(query_text.strip()) < 5:
+            return jsonify({'error': 'Query too short. Please provide more details.'}), 400
         
         user_id = request.current_user['user_id']
         user_role = request.current_user['role']
         
-        from langchain_classic.agents import AgentExecutor,create_react_agent
-        from langchain_classic.prompts import PromptTemplate
+        # Import LangGraph components
+        from typing import TypedDict, Annotated, Sequence
+        from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
         from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_classic.tools import Tool
+        from langgraph.graph import StateGraph, END
+        from langgraph.prebuilt import ToolNode
+        import operator
         
-        # Create LLM
+        # Define agent state
+        class AgentState(TypedDict):
+            """State of the agent workflow"""
+            messages: Annotated[Sequence[BaseMessage], operator.add]
+            user_query: str
+            user_role: str
+            iterations: int
+            max_iterations: int
+            final_answer: str
+            tools_used: list
+            execution_log: list
+        
+        # Initialize LLM
         llm = ChatGoogleGenerativeAI(
             model=Config.LLM_MODEL,
             google_api_key=Config.GOOGLE_API_KEY,
-            temperature=0.7
+            temperature=0.3,
+            max_output_tokens=2048
         )
         
-        # Role-specific context
-        role_context = {
-            "lawyer": "You are assisting a practicing lawyer. Provide detailed legal analysis.",
-            "student": "You are assisting a law student. Explain concepts clearly with examples.",
-            "public": "You are assisting a member of the public. Use simple, accessible language."
+        # Prepare tools
+        available_tools = []
+        tool_names = []
+        
+        # Add RAG tools
+        if langchain_tools:
+            available_tools.extend(langchain_tools)
+            tool_names.extend([tool.name for tool in langchain_tools])
+            logger.info(f"Added {len(langchain_tools)} RAG tools: {tool_names}")
+        
+        # Add case search tool
+        def search_legal_cases(query: str) -> str:
+            """Search for relevant Indian legal cases"""
+            try:
+                cases = legal_retriever.search_cases(query, limit=5)
+                if not cases:
+                    return "No relevant cases found."
+                
+                output = f"Found {len(cases)} relevant cases:\n\n"
+                for i, case in enumerate(cases, 1):
+                    output += f"{i}. {case.get('title', 'N/A')}\n"
+                    output += f"   Court: {case.get('court', 'N/A')}\n"
+                    output += f"   Summary: {case.get('summary', 'N/A')[:200]}...\n\n"
+                return output
+            except Exception as e:
+                return f"Error searching cases: {str(e)}"
+        
+        case_search_tool = Tool(
+            name="search_legal_cases",
+            func=search_legal_cases,
+            description="Search for relevant Indian legal cases and precedents. Input: search query string. Returns: List of relevant cases with summaries."
+        )
+        available_tools.append(case_search_tool)
+        tool_names.append("search_legal_cases")
+        
+        logger.info(f"Total tools available: {len(available_tools)} - {tool_names}")
+        
+        # Bind tools to LLM
+        llm_with_tools = llm.bind_tools(available_tools)
+        
+        # Define agent nodes
+        def agent_node(state: AgentState) -> AgentState:
+            """Main agent reasoning node"""
+            # Role-specific context
+            role_context = {
+                "lawyer": "You are assisting a practicing lawyer. Provide detailed legal analysis with case law references.",
+                "student": "You are assisting a law student. Explain legal concepts clearly with educational context.",
+                "public": "You are assisting a member of the public. Use simple, accessible language."
+            }
+            
+            system_prompt = f"""You are LuminaryAI, an intelligent legal assistant specializing in Indian law.
+
+{role_context.get(state['user_role'], role_context['public'])}
+
+You have access to tools for:
+- Searching and querying documents in the knowledge base
+- Finding relevant legal cases and precedents
+- Comparing documents
+- Managing document collection
+
+When answering:
+1. Use tools to gather information when needed
+2. Cite sources (document IDs, case names) when using retrieved information
+3. Provide structured, comprehensive answers
+4. Be clear about what information comes from which source
+5. If you don't have enough information, use search tools to find it
+
+Current iteration: {state['iterations']}/{state['max_iterations']}
+"""
+            
+            messages = [HumanMessage(content=system_prompt)] + state['messages']
+            
+            # Call LLM with tools
+            response = llm_with_tools.invoke(messages)
+            
+            # Log execution
+            execution_entry = {
+                'iteration': state['iterations'],
+                'type': 'agent_reasoning',
+                'content': response.content if hasattr(response, 'content') else str(response)[:200]
+            }
+            
+            return {
+                "messages": [response],
+                "iterations": state['iterations'] + 1,
+                "execution_log": state['execution_log'] + [execution_entry]
+            }
+        
+        def tool_node(state: AgentState) -> AgentState:
+            """Execute tools called by the agent"""
+            last_message = state['messages'][-1]
+            
+            # Check if there are tool calls
+            if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
+                return state
+            
+            # Execute each tool call
+            tool_messages = []
+            tools_used = state.get('tools_used', [])
+            execution_log = state.get('execution_log', [])
+            
+            # Create tool executor
+            tool_executor = ToolNode(available_tools)
+            
+            for tool_call in last_message.tool_calls:
+                tool_name = tool_call.get('name', 'unknown')
+                tools_used.append(tool_name)
+                
+                # Execute tool
+                try:
+                    result = tool_executor.invoke(state)
+                    
+                    # Log execution
+                    execution_log.append({
+                        'iteration': state['iterations'],
+                        'type': 'tool_execution',
+                        'tool': tool_name,
+                        'input': str(tool_call.get('args', {}))[:200],
+                        'success': True
+                    })
+                    
+                    return result
+                    
+                except Exception as tool_error:
+                    logger.error(f"Tool execution error: {str(tool_error)}")
+                    
+                    # Create error message
+                    error_msg = ToolMessage(
+                        content=f"Error executing {tool_name}: {str(tool_error)}",
+                        tool_call_id=tool_call.get('id', 'unknown')
+                    )
+                    tool_messages.append(error_msg)
+                    
+                    execution_log.append({
+                        'iteration': state['iterations'],
+                        'type': 'tool_execution',
+                        'tool': tool_name,
+                        'input': str(tool_call.get('args', {}))[:200],
+                        'success': False,
+                        'error': str(tool_error)
+                    })
+            
+            return {
+                "messages": tool_messages,
+                "tools_used": tools_used,
+                "execution_log": execution_log
+            }
+        
+        def should_continue(state: AgentState) -> str:
+            """Decide whether to continue or end"""
+            last_message = state['messages'][-1]
+            
+            # Check iteration limit
+            if state['iterations'] >= state['max_iterations']:
+                return "end"
+            
+            # Check if there are tool calls
+            if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+                return "continue"
+            
+            # No more tool calls - end
+            return "end"
+        
+        def finalize_answer(state: AgentState) -> AgentState:
+            """Extract final answer from conversation"""
+            last_message = state['messages'][-1]
+            
+            if hasattr(last_message, 'content'):
+                final_answer = last_message.content
+            else:
+                final_answer = str(last_message)
+            
+            return {
+                "final_answer": final_answer
+            }
+        
+        # Build LangGraph workflow
+        workflow = StateGraph(AgentState)
+        
+        # Add nodes
+        workflow.add_node("agent", agent_node)
+        workflow.add_node("tools", tool_node)
+        workflow.add_node("finalize", finalize_answer)
+        
+        # Add edges
+        workflow.set_entry_point("agent")
+        
+        workflow.add_conditional_edges(
+            "agent",
+            should_continue,
+            {
+                "continue": "tools",
+                "end": "finalize"
+            }
+        )
+        
+        workflow.add_edge("tools", "agent")
+        workflow.add_edge("finalize", END)
+        
+        # Compile graph
+        app_graph = workflow.compile()
+        
+        # Get user context
+        session = get_session(engine)
+        memory_mgr = MemoryManager(session)
+        user_context = memory_mgr.build_user_context(user_id, user_role)
+        
+        # Initialize state
+        initial_state = {
+            "messages": [HumanMessage(content=f"{query_text}\n\nUser Context: {user_context}")],
+            "user_query": query_text,
+            "user_role": user_role,
+            "iterations": 0,
+            "max_iterations": max_iterations,
+            "final_answer": "",
+            "tools_used": [],
+            "execution_log": []
         }
-        context = role_context.get(user_role, role_context["public"])
         
-        # Create prompt template
-        template = f"""You are LuminaryAI, an intelligent legal assistant specializing in Indian law.
-
-    {context}
-
-    You have access to document management tools that allow you to:
-    - Add documents to the knowledge base
-    - Search for relevant information across documents
-    - Query specific documents for answers
-    - Compare documents
-    - List and manage documents
-
-    Available tools:
-    {{tools}}
-
-    Tool names: {{tool_names}}
-
-    Always:
-    1. Think step-by-step about what tools you need
-    2. Use tools when document operations are mentioned
-    3. Provide accurate, source-based answers
-    4. Be clear about document IDs when referencing specific documents
-    5. Cite sources from documents when answering
-
-    User Question: {{input}}
-
-    {{agent_scratchpad}}"""
-
-        prompt = PromptTemplate.from_template(template)
+        # Execute graph
+        logger.info(f"LangGraph agent executing query from user {user_id}: {query_text}")
         
-        # Create agent
-        agent = create_react_agent(llm, langchain_tools, prompt)
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=langchain_tools,
-            verbose=verbose,
-            handle_parsing_errors=True,
-            early_stopping_method="generate"
-        )
-        
-        # Execute agent
-        result = agent_executor.invoke({"input": query})
-        
-        return jsonify({
-            'query': query,
-            'answer': result.get('output', ''),
-            'user_role': user_role,
-            'agent_type': 'autonomous',
-            'tools_available': len(langchain_tools),
-            'timestamp': datetime.now().isoformat()
-        }), 200
+        try:
+            # Run the graph
+            final_state = app_graph.invoke(initial_state)
+            
+            # Extract results
+            final_answer = final_state.get('final_answer', '')
+            tools_used = list(set(final_state.get('tools_used', [])))
+            iterations = final_state.get('iterations', 0)
+            execution_log = final_state.get('execution_log', [])
+            
+            # Store query in database
+            try:
+                new_query = Query(
+                    user_id=user_id,
+                    query_text=query_text,
+                    response_text=final_answer
+                )
+                session.add(new_query)
+                session.commit()
+            except Exception as db_error:
+                logger.error(f"Database error: {str(db_error)}")
+            
+            # Build response
+            response_data = {
+                'query': query_text,
+                'response': final_answer,
+                'agent_info': {
+                    'type': 'langgraph',
+                    'tools_available': tool_names,
+                    'tools_used': tools_used,
+                    'iterations': iterations,
+                    'max_iterations': max_iterations,
+                    'user_role': user_role
+                },
+                'execution_summary': f"LangGraph agent completed in {iterations} iterations using {len(tools_used)} tools out of {len(available_tools)} available"
+            }
+            
+            # Add execution log if verbose
+            if verbose:
+                response_data['execution_log'] = execution_log
+            
+            logger.info(f"LangGraph agent completed: {len(tools_used)} tools used, {iterations} iterations")
+            
+            return jsonify(response_data), 200
+            
+        except Exception as graph_error:
+            logger.error(f"LangGraph execution error: {str(graph_error)}", exc_info=True)
+            
+            # Fallback to basic reasoning engine
+            if reasoning_engine:
+                session_db = get_session(engine)
+                memory_mgr = MemoryManager(session_db)
+                user_context = memory_mgr.build_user_context(user_id, user_role)
+                
+                fallback_response = reasoning_engine.generate_legal_advice(
+                    query_text,
+                    user_context,
+                    user_role
+                )
+                session_db.close()
+                
+                return jsonify({
+                    'query': query_text,
+                    'response': fallback_response,
+                    'warning': 'Agent execution failed, fallback response provided',
+                    'error_details': str(graph_error) if verbose else 'Enable verbose mode for details'
+                }), 200
+            else:
+                return jsonify({
+                    'error': 'Agent execution failed and no fallback available',
+                    'details': str(graph_error) if verbose else 'Enable verbose mode for details'
+                }), 500
         
     except Exception as e:
-        logger.error(
-            f"Agent execution failed: {str(e)}",
-            extra={
-                'user_id': request.current_user.get('user_id') if hasattr(request, 'current_user') else None,
-                'query': query,
-                'endpoint': 'agent_query'
-            },
-            exc_info=True
-        )
+        logger.error(f"Agent endpoint error: {str(e)}", exc_info=True)
         return jsonify({
-            'error': 'AGENT_EXECUTION_ERROR',
-            'message': 'Agent execution failed. Please try again.',
-            'request_id': getattr(g, 'request_id', 'unknown')
+            'error': f'An error occurred: {str(e)}',
+            'details': 'Please check server logs for more information'
         }), 500
+    finally:
+        if session:
+            try:
+                session.close()
+            except:
+                pass
 
 @app.route('/api/status', methods=['GET'])
 def status_check():
@@ -825,10 +1142,19 @@ def status_check():
         }
     }
     
+    # Add tool details if available
+    if langchain_tools:
+        status['tools'] = {
+            'count': len(langchain_tools),
+            'names': [tool.name for tool in langchain_tools],
+            'descriptions': {tool.name: tool.description[:100] + '...' for tool in langchain_tools}
+        }
+    
     # Test database
     try:
+        from sqlalchemy import text
         session = get_session(engine)
-        session.execute('SELECT 1')
+        session.execute(text('SELECT 1'))
         session.close()
         status['database'] = 'connected'
     except Exception as e:

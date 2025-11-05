@@ -43,7 +43,7 @@ def add_document():
         result = rag_tool.add_document(content, title, metadata)
         
         if result['success']:
-            return jsonify(result), 201
+            return jsonify(result), 200
         else:
             return jsonify(result), 400
             

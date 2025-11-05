@@ -120,7 +120,8 @@ class ChromaDBRAGTool:
         self, 
         content: str, 
         title: str, 
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        doc_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Add a new document to the RAG system
@@ -129,11 +130,13 @@ class ChromaDBRAGTool:
             content: Document text content
             title: Document title
             metadata: Optional metadata
+            doc_id: Optional document ID (if not provided, will be generated from content hash)
             
         Returns:
             Result dictionary with doc_id and status
         """
-        doc_id = self._generate_doc_id(content)
+        if doc_id is None:
+            doc_id = self._generate_doc_id(content)
         
         # Check if document already exists
         if doc_id in self.index["documents"]:

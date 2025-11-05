@@ -37,6 +37,7 @@ class Document(Base):
     __tablename__ = 'documents'
     
     id = Column(Integer, primary_key=True)
+    doc_id = Column(String(36), unique=True, nullable=False)  # UUID for document
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     filename = Column(String(255), nullable=False)
     file_type = Column(String(10), nullable=False)

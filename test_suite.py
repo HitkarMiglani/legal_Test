@@ -394,3 +394,7 @@ if __name__ == "__main__":
         test_app_integration()
     elif args.test == 'direct':
         test_direct_tool_usage()
+        
+    os.rmdir("test_comprehensive_storage", ignore_errors=True)
+    os.rmdir("test_langchain_storage", ignore_errors=True)
+    os.rmdir("test_direct_storage", ignore_errors=True)
