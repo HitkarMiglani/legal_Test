@@ -192,6 +192,105 @@ def login():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/user/<int:user_id>/history', methods=['GET'])
+@auth_manager.token_required
+def get_user_history(user_id):
+    """Get user's chat history from database"""
+    try:
+        # Verify user can only access their own history
+        if request.current_user['user_id'] != user_id:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        session = get_session(engine)
+        
+        # Get recent queries (last 50)
+        queries = session.query(Query).filter_by(user_id=user_id).order_by(Query.created_at.desc()).limit(50).all()
+        
+        # Build chat history
+        chat_history = []
+        agent_history = []
+        
+        for query in reversed(queries):  # Reverse to get chronological order
+            # Determine if it's an agent query based on response content
+            is_agent = 'agent_info' in (query.response_text or '') or 'LangGraph' in (query.response_text or '')
+            
+            history_item = {
+                'role': 'user',
+                'content': query.query_text,
+                'timestamp': query.created_at.isoformat() if query.created_at else None
+            }
+            
+            response_item = {
+                'role': 'assistant',
+                'content': query.response_text,
+                'timestamp': query.created_at.isoformat() if query.created_at else None
+            }
+            
+            if is_agent:
+                agent_history.append(history_item)
+                agent_history.append(response_item)
+            else:
+                chat_history.append(history_item)
+                chat_history.append(response_item)
+        
+        # Get user preferences from memory
+        memory_mgr = MemoryManager(session)
+        user_memories = memory_mgr.get_all_memories(user_id)
+        
+        session.close()
+        
+        return jsonify({
+            'chat_history': chat_history,
+            'agent_history': agent_history,
+            'preferences': user_memories,
+            'total_queries': len(queries)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error retrieving user history: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/user/<int:user_id>/preferences', methods=['GET', 'POST'])
+@auth_manager.token_required
+def manage_preferences(user_id):
+    """Get or update user preferences using MemoryManager"""
+    try:
+        # Verify user can only access their own preferences
+        if request.current_user['user_id'] != user_id:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        session = get_session(engine)
+        memory_mgr = MemoryManager(session)
+        
+        if request.method == 'GET':
+            # Get all preferences
+            preferences = memory_mgr.get_all_memories(user_id)
+            session.close()
+            return jsonify({'preferences': preferences}), 200
+        
+        elif request.method == 'POST':
+            # Update preferences
+            data = request.get_json()
+            
+            if not data or 'key' not in data or 'value' not in data:
+                session.close()
+                return jsonify({'error': 'Missing key or value'}), 400
+            
+            key = data['key']
+            value = data['value']
+            
+            success = memory_mgr.store_memory(user_id, key, value)
+            session.close()
+            
+            if success:
+                return jsonify({'message': 'Preference saved', 'key': key}), 200
+            else:
+                return jsonify({'error': 'Failed to save preference'}), 500
+                
+    except Exception as e:
+        logger.error(f"Error managing preferences: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
 # ============== Document Routes ==============
 
 @app.route('/api/documents/upload', methods=['POST'])
@@ -241,25 +340,47 @@ def upload_document():
         
         # Process document (in background in production)
         try:
+            print(f"Processing document: {filename} (type: {file_ext})")
             result = doc_processor.process_document(file_path, file_ext)
             
+            print(f"Document processed successfully. Metadata: {result['metadata']}")
+            
+            # Validate extraction
+            if result['metadata']['char_count'] == 0:
+                raise Exception("No text content extracted. PDF may be image-based or corrupted. Try OCR or text-based PDF.")
+            
+            # Cache the extracted text and metadata in database
+            session = get_session(engine)
+            doc = session.query(Document).filter_by(doc_id=doc_id).first()
+            if doc:
+                import json
+                doc.cached_text = result['text']
+                doc.cached_metadata = json.dumps(result['metadata'])
+                session.commit()
+                print(f"💾 Cached extracted text ({result['metadata']['char_count']} chars) in database")
+            session.close()
+            
             # Add to RAG system (ChromaDB) if available
-            if rag_tool:
-                try:
-                    rag_result = rag_tool.add_document(
-                        content=result['text'],
-                        title=filename,
-                        metadata={
-                            'file_type': file_ext,
-                            'user_id': user_id,
-                            'uploaded_at': datetime.utcnow().isoformat()
-                        },
-                        doc_id=doc_id  # Use the UUID from database
-                    )
-                    logger.info(f"Document {doc_id} added to RAG system: {rag_result.get('success', False)}")
-                except Exception as rag_error:
-                    logger.error(f"Failed to add document to RAG system: {str(rag_error)}")
-                    # Continue even if RAG fails
+            # if rag_tool:
+            #     try:
+            #         print(f"Adding document to RAG system...")
+            #         rag_result = rag_tool.add_document(
+            #             content=result['text'],
+            #             title=filename,
+            #             metadata={
+            #                 'file_type': file_ext,
+            #                 'user_id': user_id,
+            #                 'uploaded_at': datetime.utcnow().isoformat()
+            #             },
+            #             doc_id=doc_id  # Use the UUID from database
+            #         )
+            #         logger.info(f"Document {doc_id} added to RAG system: {rag_result.get('success', False)}")
+            #         print(f"RAG result: {rag_result}")
+            #     except Exception as rag_error:
+            #         logger.error(f"Failed to add document to RAG system: {str(rag_error)}")
+            #         print(f"RAG error: {str(rag_error)}")
+            #         # Continue even if RAG fails
+            
             
             # Update document status
             session = get_session(engine)
@@ -268,20 +389,32 @@ def upload_document():
             session.commit()
             session.close()
             
+            print(f"Document upload complete: {doc_id}")
+            
             return jsonify({
-                'message': 'Document uploaded and processed',
+                'message': 'Document uploaded and processed successfully',
                 'document_id': doc_id,
-                'metadata': result['metadata']
+                'metadata': result['metadata'],
+                'filename': filename,
+                'chunks_count': len(result.get('chunks', []))
             }), 200
             
         except Exception as e:
+            print(f"Document processing error: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
             session = get_session(engine)
             doc = session.query(Document).filter_by(doc_id=doc_id).first()
-            doc.processed = 'failed'
-            session.commit()
+            if doc:
+                doc.processed = 'failed'
+                session.commit()
             session.close()
             
-            return jsonify({'error': f'Processing failed: {str(e)}'}), 500
+            return jsonify({
+                'error': f'Processing failed: {str(e)}',
+                'suggestion': 'If PDF is image-based, please convert to text-based PDF or use OCR'
+            }), 500
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -289,11 +422,14 @@ def upload_document():
 @app.route('/api/documents/<doc_id>/analyze', methods=['POST'])
 @auth_manager.token_required
 def analyze_document(doc_id):
-    """Analyze a document using enhanced Gemini-only processing"""
+    """Analyze a document using enhanced Gemini-only processing with timeout handling"""
+    import time
+    start_time = time.time()
+    
     try:
         data = request.get_json() or {}
         query = data.get('query', "Summarize the Document")
-        analysis_type = data.get('type', 'qa')  # comprehensive, summary, specific, qa
+        analysis_type = data.get('type', 'summary')  # Default to 'summary' for faster response
         
         user_id = request.current_user['user_id']
         user_role = request.current_user['role']
@@ -303,7 +439,6 @@ def analyze_document(doc_id):
         # Get document by doc_id (UUID)
         doc = session.query(Document).filter_by(doc_id=doc_id, user_id=user_id).first()
         
-        print(doc,Document)
         if not doc:
             session.close()
             return jsonify({'error': 'Document not found'}), 400
@@ -315,21 +450,62 @@ def analyze_document(doc_id):
                 'error': 'AI service not available. Please configure GOOGLE_API_KEY in .env file and restart the server.'
             }), 503
         
-        # Process document to extract text
-        result = doc_processor.process_document(doc.file_path, doc.file_type)
-        document_text = result['text']
-        document_metadata = result['metadata']
+        print(f"⏱️  Analysis started at {time.time() - start_time:.2f}s")
         
-        
-        
-        # Perform enhanced Gemini-based analysis
+        # Check if document already processed (use cached text if available)
+        import json
         try:
+            if doc.cached_text and doc.cached_metadata:
+                print(f"✨ Using cached text from database")
+                document_text = doc.cached_text
+                document_metadata = json.loads(doc.cached_metadata)
+                # Still need to generate chunks
+                chunks = doc_processor.chunk_text(document_text)
+                print(f"✅ Cached text loaded: {document_metadata['char_count']} chars, {len(chunks)} chunks in {time.time() - start_time:.2f}s")
+            else:
+                # Process document to extract text
+                print(f"📄 Extracting text from: {doc.file_path}")
+                result = doc_processor.process_document(doc.file_path, doc.file_type)
+                document_text = result['text']
+                document_metadata = result['metadata']
+                
+                # Cache for future use
+                doc.cached_text = document_text
+                doc.cached_metadata = json.dumps(document_metadata)
+                session.commit()
+                print(f"💾 Cached text in database for future use")
+                print(f"✅ Text extracted: {document_metadata['char_count']} chars in {time.time() - start_time:.2f}s")
+        except Exception as extract_error:
+            print(f"❌ Text extraction failed: {str(extract_error)}")
+            session.close()
+            return jsonify({
+                'error': f'Failed to extract text: {str(extract_error)}'
+            }), 500
+        
+        # For large documents (>8k chars), force summary mode to avoid timeout
+        if document_metadata['char_count'] > 8000 and analysis_type == 'comprehensive':
+            print(f"⚠️  Large document detected ({document_metadata['char_count']} chars), using summary mode")
+            analysis_type = 'summary'
+            query = "Provide a concise summary of this document with key points"
+        
+        # Add timeout check - if already taking too long, use fast mode
+        elapsed = time.time() - start_time
+        if elapsed > 5:
+            print(f"⚠️  Already at {elapsed:.2f}s, forcing fast summary mode")
+            analysis_type = 'summary'
+
+        # Perform enhanced Gemini-based analysis with timeout monitoring
+        try:
+            print(f"🤖 Starting {analysis_type} analysis at {time.time() - start_time:.2f}s")
+            
             # Use the enhanced Gemini-only document analysis
             analysis_result = reasoning_engine.analyze_legal_document(
                 document_text, 
                 analysis_type=analysis_type,
                 query=query  # For Q&A mode
             )
+            
+            print(f"✅ Analysis completed in {time.time() - start_time:.2f}s")
             
             if not analysis_result.get('success', False):
                 raise Exception(analysis_result.get('error', 'Analysis failed'))
@@ -461,6 +637,13 @@ def handle_query():
         user_id = request.current_user['user_id']
         user_role = request.current_user['role']
         
+        # Initialize session and memory manager
+        session = get_session(engine)
+        memory_mgr = MemoryManager(session)
+        
+        # Get user context from memory
+        user_context = memory_mgr.build_user_context(user_id, user_role)
+        
         # Check if API key is configured
         if not Config.GOOGLE_API_KEY or not reasoning_engine:
             return jsonify({
@@ -528,11 +711,7 @@ def handle_query():
             except Exception as rag_error:
                 print(f"Warning: RAG search failed: {str(rag_error)}")
         
-        # Step 3: Build context
-        session = get_session(engine)
-        memory_mgr = MemoryManager(session)
-        user_context = memory_mgr.build_user_context(user_id, user_role)
-        
+        # Step 3: Enhance context with cases and documents
         # Add case context
         if cases:
             user_context += "\n\nRelevant Cases:\n"
@@ -788,6 +967,11 @@ def agent_query():
         user_id = request.current_user['user_id']
         user_role = request.current_user['role']
         
+        # Initialize session and memory manager
+        session = get_session(engine)
+        memory_mgr = MemoryManager(session)
+        user_context = memory_mgr.build_user_context(user_id, user_role)
+        
         # Import LangGraph components
         from typing import TypedDict, Annotated, Sequence
         from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
@@ -862,6 +1046,10 @@ def agent_query():
             """Main agent reasoning node"""
             # Role-specific context
             role_context = {
+                "LAWYER": "You are assisting a practicing lawyer. Provide detailed legal analysis with case law references.",
+                "STUDENT": "You are assisting a law student. Explain legal concepts clearly with educational context.",
+                "PUBLIC": "You are assisting a member of the public. Use simple, accessible language.",
+                # Fallback for lowercase (backwards compatibility)
                 "lawyer": "You are assisting a practicing lawyer. Provide detailed legal analysis with case law references.",
                 "student": "You are assisting a law student. Explain legal concepts clearly with educational context.",
                 "public": "You are assisting a member of the public. Use simple, accessible language."
@@ -869,7 +1057,10 @@ def agent_query():
             
             system_prompt = f"""You are LuminaryAI, an intelligent legal assistant specializing in Indian law.
 
-{role_context.get(state['user_role'], role_context['public'])}
+{role_context.get(state['user_role'], role_context['PUBLIC'])}
+
+User Context and Preferences:
+{user_context}
 
 You have access to tools for:
 - Searching and querying documents in the knowledge base
@@ -883,6 +1074,7 @@ When answering:
 3. Provide structured, comprehensive answers
 4. Be clear about what information comes from which source
 5. If you don't have enough information, use search tools to find it
+6. Consider user preferences and previous interactions from their context
 
 Current iteration: {state['iterations']}/{state['max_iterations']}
 """

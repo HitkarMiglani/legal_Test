@@ -24,6 +24,14 @@ docx2txt
 python-docx
 PyPDF2
 
+# OCR (Optional - for image-based PDFs)
+pdf2image
+pytesseract
+# Note: Tesseract OCR engine must be installed separately
+# Windows: https://github.com/UB-Mannheim/tesseract/wiki
+# Linux: sudo apt-get install tesseract-ocr
+# Mac: brew install tesseract
+
 # Database and Storage
 firebase-admin
 boto3

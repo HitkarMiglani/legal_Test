@@ -4,14 +4,14 @@ Provides REST endpoints for LLM-based document management
 """
 from flask import Blueprint, request, jsonify
 from modules.auth import auth_manager
-from modules.document_rag_tool import DocumentRAGTool
+from modules.document_rag_chromadb import ChromaDBRAGTool
 import os
 
 # Create blueprint
 rag_bp = Blueprint('rag', __name__, url_prefix='/api/rag')
 
 # Initialize tool (shared instance)
-rag_tool = DocumentRAGTool(storage_path="document_storage")
+rag_tool = ChromaDBRAGTool(storage_path="chromadb_storage", model_name="all-MiniLM-L6-v2")
 
 @rag_bp.route('/documents', methods=['POST'])
 @auth_manager.token_required

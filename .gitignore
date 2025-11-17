@@ -67,3 +67,7 @@ Thumbs.db
 .streamlit/secrets.toml
 test*
 *storage
+test_suite.py
+
+NOTREQ.md
+README_dix.md

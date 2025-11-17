@@ -24,57 +24,20 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.session_state["dark_mode"] = False
-# Dynamic CSS based on theme
-def get_theme_colors():
-    """Get color scheme based on dark mode setting"""
-    
-    if st.session_state.dark_mode:
-        return {
-            'bg_primary': '#0F172A',
-            'bg_secondary': '#1E293B',
-            'bg_tertiary': '#334155',
-            'text_primary': '#F1F5F9',
-            'text_secondary': '#CBD5E1',
-            'text_muted': '#94A3B8',
-            'accent_primary': '#8B5CF6',
-            'accent_secondary': '#EC4899',
-            'accent_tertiary': '#06B6D4',
-            'success': '#10B981',
-            'error': '#EF4444',
-            'warning': '#F59E0B',
-            'border': '#475569',
-            'shadow': 'rgba(0, 0, 0, 0.5)',
-            'gradient_1': 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)',
-            'gradient_2': 'linear-gradient(135deg, #06B6D4 0%, #3B82F6 100%)',
-            'gradient_3': 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-            'hero_gradient': 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 50%, #F97316 100%)',
-            'hover':'#334155',
-        }
-    else:
-        return {
-            'bg_primary': '#FFFFFF',
-            'bg_secondary': '#F8FAFC',
-            'bg_tertiary': '#F1F5F9',
-            'text_primary': '#0F172A',
-            'text_secondary': '#334155',
-            'text_muted': '#64748B',
-            'accent_primary': '#8B5CF6',
-            'accent_secondary': '#EC4899',
-            'accent_tertiary': '#06B6D4',
-            'success': '#10B981',
-            'error': '#EF4444',
-            'warning': '#F59E0B',
-            'border': '#E2E8F0',
-            'shadow': 'rgba(0, 0, 0, 0.1)',
-            'gradient_1': 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)',
-            'gradient_2': 'linear-gradient(135deg, #06B6D4 0%, #3B82F6 100%)',
-            'gradient_3': 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-            'hero_gradient': 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 50%, #F97316 100%)',
-            'hover':'#E2E8F0',
-        }
-
-colors = get_theme_colors()
+# Use color scheme that adapts to Streamlit's theme
+colors = {
+    'accent_primary': '#8B5CF6',
+    'accent_secondary': '#EC4899',
+    'accent_tertiary': '#06B6D4',
+    'success': '#10B981',
+    'error': '#EF4444',
+    'warning': '#F59E0B',
+    'gradient_1': 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)',
+    'gradient_2': 'linear-gradient(135deg, #06B6D4 0%, #3B82F6 100%)',
+    'gradient_3': 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+    'hero_gradient': 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 50%, #F97316 100%)',
+    'shadow':'#334155',
+}
 
 # Custom CSS - Enhanced with Dark Mode Support
 st.markdown(f"""
@@ -85,20 +48,6 @@ st.markdown(f"""
     /* Global Styles */
     * {{
         font-family: 'Inter', sans-serif;
-        transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
-    }}
-    
-    /* Main Background */
-    .main {{
-        background-color: {colors['bg_primary']};
-        color: {colors['text_primary']};
-    }}
-    
-    /* Sections Background */
-    section[data-testid="stSidebar"],
-    .stApp {{
-        background-color: {colors['bg_primary']};
-        color: {colors['text_primary']};
     }}
     
     .main-header {{
@@ -123,11 +72,11 @@ st.markdown(f"""
     
     .sub-header {{
         font-size: 1.3rem;
-        color: {colors['text_secondary']};
         text-align: center;
         margin-bottom: 2.5rem;
         font-weight: 400;
         line-height: 1.6;
+        opacity: 0.8;
     }}
     
     .hero-section {{
@@ -237,8 +186,8 @@ st.markdown(f"""
     .feature-card {{
         padding: 2.5rem;
         border-radius: 1.25rem;
-        background: {colors['bg_secondary']};
-        border: 2px solid {colors['border']};
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(139, 92, 246, 0.2);
         margin-bottom: 1.5rem;
         transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
         position: relative;
@@ -281,7 +230,6 @@ st.markdown(f"""
     .feature-title {{
         font-size: 1.6rem;
         font-weight: 700;
-        color: {colors['text_primary']};
         margin-bottom: 0.875rem;
         position: relative;
         z-index: 1;
@@ -289,21 +237,21 @@ st.markdown(f"""
     }}
     
     .feature-description {{
-        color: {colors['text_secondary']};
         font-size: 1.05rem;
         line-height: 1.7;
         position: relative;
         z-index: 1;
+        opacity: 0.8;
     }}
     
     .stat-card {{
-        background: {colors['bg_secondary']};
+        background: rgba(255, 255, 255, 0.05);
         padding: 2rem;
         border-radius: 1.25rem;
-        box-shadow: 0 8px 24px {colors['shadow']};
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
         text-align: center;
         transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-        border: 2px solid {colors['border']};
+        border: 2px solid rgba(139, 92, 246, 0.2);
         position: relative;
         overflow: hidden;
     }}
@@ -336,11 +284,11 @@ st.markdown(f"""
     }}
     
     .stat-label {{
-        color: {colors['text_secondary']};
         font-size: 1rem;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.05em;
+        opacity: 0.7;
     }}
     
     .success-box {{
@@ -354,31 +302,31 @@ st.markdown(f"""
     
     .error-box {{
         padding: 1.5rem;
-        background: {colors['bg_secondary']};
+        background: rgba(239, 68, 68, 0.1);
         border-radius: 1rem;
         margin: 1rem 0;
         border-left: 5px solid {colors['error']};
-        box-shadow: 0 4px 12px {colors['shadow']};
-        border: 1px solid {colors['border']};
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.3);
     }}
     
     .info-box {{
         padding: 1.5rem;
-        background: {colors['bg_secondary']};
+        background: rgba(6, 182, 212, 0.1);
         border-radius: 1rem;
         margin: 1rem 0;
         border-left: 5px solid {colors['accent_tertiary']};
-        box-shadow: 0 4px 12px {colors['shadow']};
-        border: 1px solid {colors['border']};
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        border: 1px solid rgba(6, 182, 212, 0.3);
     }}
     
     .chat-message {{
         padding: 1.5rem;
         border-radius: 1.25rem;
         margin: 0.875rem 0;
-        box-shadow: 0 4px 12px {colors['shadow']};
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         transition: all 0.3s ease;
-        border: 1px solid {colors['border']};
+        border: 1px solid rgba(139, 92, 246, 0.2);
     }}
     
     .chat-message:hover {{
@@ -387,23 +335,17 @@ st.markdown(f"""
     }}
     
     .user-message {{
-        background: {colors['bg_secondary']};
+        background: rgba(6, 182, 212, 0.1);
         border-left: 5px solid {colors['accent_tertiary']};
     }}
     
     .assistant-message {{
-        background: {colors['bg_secondary']};
+        background: rgba(16, 185, 129, 0.1);
         border-left: 5px solid {colors['success']};
-    }}
-    
-    [data-testid="stSidebar"] {{
-        background: {colors['bg_secondary']};
-        border-right: 2px solid {colors['border']};
     }}
     
     [data-testid="stSidebar"] .stRadio > label {{
         font-weight: 600;
-        color: {colors['text_primary']};
         margin-bottom: 1rem;
         font-size: 1.1rem;
     }}
@@ -483,9 +425,9 @@ st.markdown(f"""
         position: relative;
         padding: 2.5rem;
         border-radius: 1.25rem;
-        background: {colors['bg_secondary']};
+        background: rgba(255, 255, 255, 0.05);
         margin: 1rem 0;
-        border: 2px solid {colors['border']};
+        border: 2px solid rgba(139, 92, 246, 0.2);
     }}
     
     .gradient-border-card::before {{
@@ -503,17 +445,14 @@ st.markdown(f"""
     /* Tabs styling */
     .stTabs [data-baseweb="tab-list"] {{
         gap: 1rem;
-        background-color: {colors['bg_tertiary']};
         padding: 0.75rem;
         border-radius: 1rem;
-        border: 1px solid {colors['border']};
     }}
     
     .stTabs [data-baseweb="tab"] {{
         border-radius: 0.75rem;
         font-weight: 600;
         padding: 0.875rem 1.75rem;
-        color: {colors['text_secondary']};
         transition: all 0.3s ease;
     }}
     
@@ -521,52 +460,6 @@ st.markdown(f"""
         background: {colors['gradient_1']};
         color: white;
         box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
-    }}
-    
-    /* Input fields */
-    .stTextInput input, .stTextArea textarea {{
-        border-radius: 1rem;
-        border: 2px solid {colors['border']};
-        background-color: {colors['bg_secondary']};
-        color: {colors['text_primary']};
-        transition: all 0.3s ease;
-        padding: 0.875rem 1.25rem;
-    }}
-    
-    .stTextInput input:focus, .stTextArea textarea:focus {{
-        border-color: {colors['accent_primary']};
-        box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.2);
-        background-color: {colors['bg_primary']};
-    }}
-    
-    /* Dark Mode Toggle Button */
-    .dark-mode-toggle {{
-        position: fixed;
-        bottom: 2rem;
-        right: 2rem;
-        z-index: 9999;
-        background: {colors['gradient_1']};
-        color: white;
-        border: none;
-        border-radius: 50%;
-        width: 60px;
-        height: 60px;
-        font-size: 1.5rem;
-        cursor: pointer;
-        box-shadow: 0 8px 24px rgba(139, 92, 246, 0.4);
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }}
-    
-    .dark-mode-toggle:hover {{
-        transform: scale(1.1) rotate(15deg);
-        box-shadow: 0 12px 32px rgba(139, 92, 246, 0.5);
-    }}
-    
-    .dark-mode-toggle:active {{
-        transform: scale(0.95) rotate(0deg);
     }}
     
     /* Metrics */
@@ -584,50 +477,14 @@ st.markdown(f"""
         border-radius: 0.75rem;
         font-weight: 500;
         transition: all 0.2s ease;
-        background: {colors['bg_secondary']};
-        border: 1px solid {colors['border']};
-        }}
-    
-    .streamlit-expanderHeader:hover {{
-        background: {colors['hover']};
     }}
     
-    /* Metrics */
     [data-testid="stMetricValue"] {{
-        color: {colors['text_primary']};
         font-weight: 700;
     }}
     
     [data-testid="stMetricLabel"] {{
-        color: {colors['text_secondary']};
         font-weight: 500;
-    }}
-    
-    /* Info/Alert boxes */
-    .stAlert {{
-        background: {colors['bg_secondary']};
-        border-left: 4px solid {colors['accent_primary']};
-        border-radius: 0.75rem;
-        padding: 1rem;
-    }}
-    
-    /* Dataframes and Tables */
-    [data-testid="stDataFrame"] {{
-        border: 1px solid {colors['border']};
-        border-radius: 0.75rem;
-        overflow: hidden;
-    }}
-    
-    .stTable {{
-        background: {colors['bg_secondary']};
-        border-radius: 0.75rem;
-    }}
-    
-    /* Code blocks */
-    .stCodeBlock {{
-        background: {colors['bg_secondary']};
-        border: 1px solid {colors['border']};
-        border-radius: 0.75rem;
     }}
     
     /* Chat Messages */
@@ -659,8 +516,8 @@ st.markdown(f"""
     }}
     
     .assistant-message {{
-        background: {colors['bg_secondary']};
-        border: 1px solid {colors['border']};
+        background: rgba(16, 185, 129, 0.1);
+        border: 1px solid rgba(16, 185, 129, 0.3);
         margin-right: 2rem;
     }}
     
@@ -684,10 +541,6 @@ st.markdown(f"""
     .user-message .message-content {{
         color: white;
     }}
-    
-    .assistant-message .message-content {{
-        color: {colors['text_primary']};
-    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -704,8 +557,6 @@ if 'api_connected' not in st.session_state:
     st.session_state.api_connected = None
 if 'show_login' not in st.session_state:
     st.session_state.show_login = False
-if 'dark_mode' not in st.session_state:
-    st.session_state.dark_mode = False
 
 # Helper functions
 def check_api_connection():
@@ -784,7 +635,19 @@ def login_page():
                             st.session_state.token = data['token']
                             st.session_state.user = data['user']
                             
+                            # Load chat history from database
+                            user_id = data['user']['id']
+                            history_response = make_api_request(f'/user/{user_id}/history', 'GET')
+                            if history_response and history_response.status_code == 200:
+                                history_data = history_response.json()
+                                st.session_state.chat_history = history_data.get('chat_history', [])
+                                st.session_state.agent_chat_history = history_data.get('agent_history', [])
+                            else:
+                                st.session_state.chat_history = []
+                                st.session_state.agent_chat_history = []
+                            
                             st.success("✅ Login successful!")
+                            st.balloons()
                             st.rerun()
                         elif response and response.status_code == 401:
                             st.error("❌ Invalid username or password. Please try again.")
@@ -857,17 +720,7 @@ def main_app():
     """Main application interface"""
     # Sidebar
     with st.sidebar:
-        # Dark mode toggle
         st.markdown("<br>", unsafe_allow_html=True)
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            mode_icon = "🌙" if not st.session_state.dark_mode else "☀️"
-            mode_text = "Dark Mode" if not st.session_state.dark_mode else "Light Mode"
-            if st.button(f"{mode_icon} {mode_text}", use_container_width=True, key="theme_toggle"):
-                st.session_state.dark_mode = not st.session_state.dark_mode
-                st.rerun()
-        
-        st.divider()
         
         # User info card
         st.markdown(f"""
@@ -902,7 +755,8 @@ def main_app():
             "🤖 Agent Query",
             "📚 Document RAG",
             "🔍 Legal Research",
-            "📁 My Documents"
+            "📁 My Documents",
+            "⚙️ Settings"
         ], label_visibility="visible")
         
         st.divider()
@@ -929,6 +783,8 @@ def main_app():
         show_legal_research()
     elif page == "📁 My Documents":
         show_my_documents()
+    elif page == "⚙️ Settings":
+        show_settings()
 
 def show_landing_page():
     """Landing page for non-authenticated users"""
@@ -1403,8 +1259,24 @@ def show_upload_and_analyze():
                         print(doc_data)
                         doc_id = doc_data['document_id']
                         
+                        # Check if document has content
+                        metadata = doc_data.get('metadata', {})
+                        if metadata.get('char_count', 0) == 0:
+                            st.error("⚠️ Document uploaded but no text was extracted!")
+                            st.warning("This usually happens with:")
+                            st.markdown("""
+                            - **Image-based PDFs** (scanned documents without OCR)
+                            - **Corrupted files**
+                            - **Empty documents**
+                            
+                            **Solutions:**
+                            - Convert scanned PDFs to text-based PDFs
+                            - Use OCR software first
+                            - Try a different file format (DOCX, TXT)
+                            """)
+                            return
                         
-                        st.success("Document uploaded successfully!")
+                        st.success(f"✅ Document uploaded successfully! ({metadata.get('word_count', 0)} words extracted)")
                         
                         # Analyze document
                         with st.spinner("Analyzing document..."):
@@ -1471,6 +1343,7 @@ def show_chat_with_documents():
     # Fetch RAG documents
     with st.spinner("Loading your documents..."):
         response = make_api_request('/documents', 'GET')
+
     
     if response and response.status_code == 200 :
         rag_data = response.json()
@@ -1480,7 +1353,6 @@ def show_chat_with_documents():
             st.info("📭 No documents found in your RAG knowledge base. Upload documents from the 'Document RAG' page first.")
             return
         
-        # print(documents)
         # Document selector
         doc_options = {f"{doc['filename']} (ID: {doc['doc_id'][:8]}...)": doc['doc_id'] 
                       for doc in documents}
@@ -1492,6 +1364,7 @@ def show_chat_with_documents():
         )
         
         selected_doc_id = doc_options[selected_doc_label]
+        print("Selected_Doc_ID",selected_doc_id)
         
         # Show document info
         selected_doc = next(doc for doc in documents if doc['doc_id'] == selected_doc_id)
@@ -1560,14 +1433,19 @@ def show_chat_with_documents():
             })
             
             with st.spinner("🔍 Searching document and generating answer..."):
-                # Query the document
-                print("Selected Doc_ID:",selected_doc_id)
-                query_response = make_api_request(
-                    f'/documents/{selected_doc_id}/analyze',
-                    'POST',
-                    {'query': user_question}
-                )
-                print(query_response)
+                # Query the document with extended timeout
+                print("Selected___Doc_ID:",selected_doc_id)
+                try:
+                    query_response = make_api_request(
+                        f'/documents/{selected_doc_id}/analyze',
+                        'POST',
+                        {'query': user_question, 'type': 'qa'},
+                        timeout=60  # Extended timeout for document analysis
+                    )
+                    print(f"Query response status: {query_response.status_code if query_response else 'None'}")
+                except Exception as req_error:
+                    print(f"Request error: {str(req_error)}")
+                    query_response = None
                 
                 if query_response and query_response.status_code == 200:
                     answer_data = query_response.json()
@@ -1588,6 +1466,15 @@ def show_chat_with_documents():
                                 st.markdown("---")
                     
                     st.rerun()
+                elif query_response is None:
+                    # Handle timeout or connection error
+                    error_msg = "Request timed out or connection failed. The document analysis is taking longer than expected. Please try again with a shorter document or simpler question."
+                    st.session_state[chat_key].append({
+                        'role': 'assistant',
+                        'content': f"❌ Error: {error_msg}"
+                    })
+                    st.error(error_msg)
+                    st.rerun()
                 else:
                     error_msg = "Failed to get answer"
                     if query_response:
@@ -1601,6 +1488,7 @@ def show_chat_with_documents():
                         'role': 'assistant',
                         'content': f"❌ Error: {error_msg}"
                     })
+                    st.error(error_msg)
                     st.rerun()
     
     else:
@@ -2182,6 +2070,163 @@ def show_my_documents():
             st.info("No documents uploaded yet. Go to Document Analysis to upload your first document!")
     else:
         st.error("Failed to load documents")
+
+def show_settings():
+    """User settings and preferences management"""
+    st.title("⚙️ Settings & Preferences")
+    st.markdown("Manage your account settings and personalize your experience")
+    
+    user_id = st.session_state.user['id']
+    
+    # Load current preferences
+    response = make_api_request(f'/user/{user_id}/preferences', 'GET')
+    current_preferences = {}
+    if response and response.status_code == 200:
+        data = response.json()
+        current_preferences = data.get('preferences', {})
+    
+    st.markdown("---")
+    
+    # User Profile Section
+    st.subheader("👤 User Profile")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info(f"**Username:** {st.session_state.user['username']}")
+        st.info(f"**Email:** {st.session_state.user['email']}")
+    with col2:
+        st.info(f"**Role:** {st.session_state.user['role'].title()}")
+        st.info(f"**Chat History:** {len(st.session_state.chat_history)} messages")
+    
+    st.markdown("---")
+    
+    # Preferences Section
+    st.subheader("🎯 Preferences")
+    st.caption("These preferences help personalize your experience")
+    
+    # Legal Practice Area
+    practice_areas = [
+        "General", "Criminal Law", "Civil Law", "Corporate Law", 
+        "Family Law", "Property Law", "Constitutional Law", 
+        "Tax Law", "Labour Law", "IP Law", "Other"
+    ]
+    current_area = current_preferences.get('practice_area', 'General')
+    practice_area = st.selectbox(
+        "Primary Area of Interest",
+        practice_areas,
+        index=practice_areas.index(current_area) if current_area in practice_areas else 0,
+        help="Your main area of legal interest or practice"
+    )
+    
+    # Response Style
+    response_styles = ["Concise", "Detailed", "Educational"]
+    current_style = current_preferences.get('response_style', 'Detailed')
+    response_style = st.selectbox(
+        "Preferred Response Style",
+        response_styles,
+        index=response_styles.index(current_style) if current_style in response_styles else 1,
+        help="How you prefer responses to be formatted"
+    )
+    
+    # Language Preference
+    languages = ["English", "हिन्दी (Hindi)", "Both"]
+    current_lang = current_preferences.get('language', 'English')
+    language = st.selectbox(
+        "Preferred Language",
+        languages,
+        index=languages.index(current_lang) if current_lang in languages else 0,
+        help="Language for responses (Hindi support coming soon)"
+    )
+    
+    # Citation Style
+    citation_styles = ["Full Citations", "Brief References", "No Citations"]
+    current_citation = current_preferences.get('citation_style', 'Full Citations')
+    citation_style = st.selectbox(
+        "Citation Style",
+        citation_styles,
+        index=citation_styles.index(current_citation) if current_citation in citation_styles else 0,
+        help="How legal case citations should be displayed"
+    )
+    
+    # Additional Notes
+    current_notes = current_preferences.get('notes', '')
+    notes = st.text_area(
+        "Additional Notes",
+        value=current_notes,
+        placeholder="Any specific requirements or preferences...",
+        help="Tell us more about how we can better assist you"
+    )
+    
+    st.markdown("---")
+    
+    # Save Button
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        if st.button("💾 Save Preferences", use_container_width=True):
+            with st.spinner("Saving preferences..."):
+                # Save each preference
+                preferences_to_save = {
+                    'practice_area': practice_area,
+                    'response_style': response_style,
+                    'language': language,
+                    'citation_style': citation_style,
+                    'notes': notes
+                }
+                
+                success_count = 0
+                for key, value in preferences_to_save.items():
+                    response = make_api_request(
+                        f'/user/{user_id}/preferences',
+                        'POST',
+                        {'key': key, 'value': value}
+                    )
+                    if response and response.status_code == 200:
+                        success_count += 1
+                
+                if success_count == len(preferences_to_save):
+                    st.success("✅ Preferences saved successfully!")
+                    st.balloons()
+                else:
+                    st.warning(f"⚠️ Saved {success_count}/{len(preferences_to_save)} preferences")
+    
+    st.markdown("---")
+    
+    # Chat History Management
+    st.subheader("💬 Chat History")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Legal Assistant Messages", len(st.session_state.chat_history))
+    with col2:
+        st.metric("Agent Query Messages", len(st.session_state.agent_chat_history))
+    
+    if st.button("🗑️ Clear All Chat History", use_container_width=False):
+        if st.warning("This will clear your chat history for this session. Continue?"):
+            st.session_state.chat_history = []
+            st.session_state.agent_chat_history = []
+            st.success("Chat history cleared!")
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # Data Export
+    st.subheader("📦 Data Export")
+    st.caption("Download your data for backup or migration")
+    
+    if st.button("📥 Export My Data", use_container_width=False):
+        export_data = {
+            'user': st.session_state.user,
+            'preferences': current_preferences,
+            'chat_history_count': len(st.session_state.chat_history),
+            'agent_history_count': len(st.session_state.agent_chat_history)
+        }
+        
+        import json
+        json_str = json.dumps(export_data, indent=2)
+        st.download_button(
+            label="💾 Download JSON",
+            data=json_str,
+            file_name=f"luminary_data_{st.session_state.user['username']}.json",
+            mime="application/json"
+        )
 
 # Main app logic
 def main():

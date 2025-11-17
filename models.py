@@ -46,6 +46,10 @@ class Document(Base):
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     processed = Column(String(20), default='pending')  # pending, processing, completed, failed
     
+    # Cached processing results
+    cached_text = Column(Text)  # Extracted and cleaned text
+    cached_metadata = Column(Text)  # JSON string of metadata (char_count, word_count, etc.)
+    
     # Relationships
     user = relationship("User", back_populates="documents")
     analyses = relationship("Analysis", back_populates="document", cascade="all, delete-orphan")
