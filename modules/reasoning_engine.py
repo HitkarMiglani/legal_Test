@@ -29,6 +29,14 @@ class GeminiReasoningEngine:
             'top_p': 0.8,
             'top_k': 40
         }
+        
+        # Fast generation config for summaries (reduces timeout risk)
+        self.fast_generation_config = {
+            'temperature': 0.5,
+            'max_output_tokens': 1024,  # Reduced for faster response
+            'top_p': 0.8,
+            'top_k': 40
+        }
     
     def _chunk_document(self, text: str, chunk_size: int = 2000) -> List[str]:
         """
@@ -73,10 +81,13 @@ class GeminiReasoningEngine:
         Returns:
             Dictionary of extracted elements
         """
+        # Limit text for faster extraction
+        text_preview = document_text[:2000] if len(document_text) > 2000 else document_text
+        
         prompt = f"""
 Extract key legal elements from this document and return ONLY valid JSON:
 
-{document_text[:3000]}
+{text_preview}
 
 Extract:
 {{
@@ -96,10 +107,7 @@ Return ONLY the JSON object, no explanation.
         try:
             response = self.model.generate_content(
                 prompt,
-                generation_config={
-                    'temperature': 0.3,
-                    'max_output_tokens': 1024
-                }
+                generation_config=self.fast_generation_config
             )
             
             # Try to parse JSON
@@ -107,7 +115,18 @@ Return ONLY the JSON object, no explanation.
             text = text.replace('```json', '').replace('```', '').strip()
             return json.loads(text)
         except Exception as e:
-            return {"error": f"Failed to extract elements: {str(e)}"}
+            # Return empty structure on error to prevent cascade failure
+            return {
+                "document_type": "unknown",
+                "parties": [],
+                "key_dates": [],
+                "legal_provisions": [],
+                "obligations": [],
+                "rights": [],
+                "amounts": [],
+                "jurisdiction": "unknown",
+                "error": f"Extraction failed: {str(e)}"
+            }
     
     def analyze_legal_document(
         self, 
@@ -217,7 +236,10 @@ Format clearly with headers. Be specific and cite relevant Indian laws.
             }
     
     def _summary_analysis(self, document_text: str, key_elements: Dict) -> Dict[str, any]:
-        """Generate concise summary"""
+        """Generate concise summary - optimized for speed"""
+        
+        # Limit document text to prevent timeout (reduced from 5000 to 3000)
+        text_preview = document_text[:3000] if len(document_text) > 3000 else document_text
         
         prompt = f"""
 Provide a concise executive summary of this legal document:
@@ -225,8 +247,8 @@ Provide a concise executive summary of this legal document:
 KEY ELEMENTS:
 {json.dumps(key_elements, indent=2)}
 
-DOCUMENT:
-{document_text[:3000]}
+DOCUMENT (Preview):
+{text_preview}
 
 Summary should include:
 - Document type and purpose (1-2 sentences)
@@ -242,10 +264,7 @@ Keep it clear, concise, and actionable.
         try:
             response = self.model.generate_content(
                 prompt,
-                generation_config={
-                    'temperature': 0.5,
-                    'max_output_tokens': 1024
-                }
+                generation_config=self.fast_generation_config
             )
             
             return {
@@ -617,7 +636,7 @@ Be precise and to-the-point. No unnecessary elaboration.
             "public": "Use simple, accessible language suitable for the general public."
         }
         
-        instruction = role_instructions.get(role, role_instructions["public"])
+        instruction = role_instructions.get(role, role_instructions["PUBLIC"])
         
         prompt = f"""
 {instruction}

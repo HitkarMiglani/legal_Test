@@ -1,7 +1,7 @@
 """
 LangChain Tool Wrapper for Document RAG Tool
 Makes the RAG tool accessible to LLMs via LangChain
-Works with both DocumentRAGTool and ChromaDBRAGTool
+Works with ChromaDBRAGTool (ChromaDB vector store with local embeddings)
 """
 from typing import Optional, Type, Dict, Any
 from langchain.tools import BaseTool
@@ -463,13 +463,13 @@ class GetStatisticsTool(BaseTool):
 
 # ==================== TOOL FACTORY ====================
 
-def create_document_rag_tools(rag_tool=None, storage_path: str = "document_storage") -> list:
+def create_document_rag_tools(rag_tool=None, storage_path: str = "chromadb_storage") -> list:
     """
     Create all Document RAG tools for LangChain
     
     Args:
-        rag_tool: Optional pre-initialized RAG tool (ChromaDB or DocumentRAG)
-        storage_path: Path to document storage (used if rag_tool not provided)
+        rag_tool: Optional pre-initialized ChromaDBRAGTool
+        storage_path: Path to ChromaDB storage (used if rag_tool not provided)
         
     Returns:
         List of LangChain tools
@@ -477,7 +477,7 @@ def create_document_rag_tools(rag_tool=None, storage_path: str = "document_stora
     # Use provided tool or create default one
     if rag_tool is None:
         from modules.document_rag_chromadb import ChromaDBRAGTool
-        rag_tool = ChromaDBRAGTool(storage_path=storage_path)
+        rag_tool = ChromaDBRAGTool(storage_path=storage_path, model_name="all-MiniLM-L6-v2")
     
     return [
         AddDocumentTool(rag_tool),

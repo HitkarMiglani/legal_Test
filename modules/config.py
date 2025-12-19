@@ -30,6 +30,7 @@ class Config(object):
     
     # API Keys
     GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+    print("GOOGLE_API_KEY:", GOOGLE_API_KEY)
     INDIAN_KANOON_API_KEY = os.getenv('INDIAN_KANOON_API_KEY')
     
     # Database Configuration

@@ -4,14 +4,18 @@ Provides REST endpoints for LLM-based document management
 """
 from flask import Blueprint, request, jsonify
 from modules.auth import auth_manager
-from modules.document_rag_tool import DocumentRAGTool
 import os
 
 # Create blueprint
 rag_bp = Blueprint('rag', __name__, url_prefix='/api/rag')
 
-# Initialize tool (shared instance)
-rag_tool = DocumentRAGTool(storage_path="document_storage")
+# RAG tool instance will be injected from app.py
+rag_tool = None
+
+def init_rag_routes(rag_tool_instance):
+    """Initialize routes with the shared RAG tool instance"""
+    global rag_tool
+    rag_tool = rag_tool_instance
 
 @rag_bp.route('/documents', methods=['POST'])
 @auth_manager.token_required
@@ -26,6 +30,9 @@ def add_document():
         "metadata": {"key": "value"}
     }
     """
+    if rag_tool is None:
+        return jsonify({'error': 'RAG tool not initialized'}), 503
+        
     try:
         data = request.get_json()
         
@@ -43,7 +50,7 @@ def add_document():
         result = rag_tool.add_document(content, title, metadata)
         
         if result['success']:
-            return jsonify(result), 201
+            return jsonify(result), 200
         else:
             return jsonify(result), 400
             
@@ -130,6 +137,9 @@ def query_document(doc_id):
         "question": "your question"
     }
     """
+    if rag_tool is None:
+        return jsonify({'error': 'RAG tool not initialized'}), 503
+        
     try:
         data = request.get_json()
         question = data.get('question')

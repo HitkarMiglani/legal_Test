@@ -37,6 +37,7 @@ class Document(Base):
     __tablename__ = 'documents'
     
     id = Column(Integer, primary_key=True)
+    doc_id = Column(String(36), unique=True, nullable=False)  # UUID for document
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     filename = Column(String(255), nullable=False)
     file_type = Column(String(10), nullable=False)
@@ -44,6 +45,10 @@ class Document(Base):
     content_hash = Column(String(64))
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     processed = Column(String(20), default='pending')  # pending, processing, completed, failed
+    
+    # Cached processing results
+    cached_text = Column(Text)  # Extracted and cleaned text
+    cached_metadata = Column(Text)  # JSON string of metadata (char_count, word_count, etc.)
     
     # Relationships
     user = relationship("User", back_populates="documents")
