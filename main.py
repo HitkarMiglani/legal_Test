@@ -749,13 +749,8 @@ def main_app():
         st.markdown("<br>", unsafe_allow_html=True)
         
         page = st.radio("📍 Navigation", [
-            "🏠 Home",
-            "📄 Document Analysis",
-            "💬 Legal Assistant",
-            "🤖 Agent Query",
-            "📚 Document RAG",
-            "🔍 Legal Research",
-            "📁 My Documents",
+            "💬 Chat",
+            "📄 Documents", 
             "⚙️ Settings"
         ], label_visibility="visible")
         
@@ -765,24 +760,13 @@ def main_app():
             st.session_state.token = None
             st.session_state.user = None
             st.session_state.chat_history = []
-            page = "🏠 Home"
-            # st.rerun()
+            page = "💬 Chat"
     
     # Main content
-    if page == "🏠 Home":
-        show_home_page()
-    elif page == "📄 Document Analysis":
-        show_document_analysis()
-    elif page == "💬 Legal Assistant":
-        show_legal_assistant()
-    elif page == "🤖 Agent Query":
-        show_agent_query()
-    elif page == "📚 Document RAG":
-        show_document_rag()
-    elif page == "🔍 Legal Research":
-        show_legal_research()
-    elif page == "📁 My Documents":
-        show_my_documents()
+    if page == "💬 Chat":
+        show_chat_page()
+    elif page == "📄 Documents":
+        show_documents_page()
     elif page == "⚙️ Settings":
         show_settings()
 
@@ -1256,7 +1240,7 @@ def show_upload_and_analyze():
                     
                     if response and response.status_code == 200:
                         doc_data = response.json()
-                        print(doc_data)
+                        # print(doc_data)
                         doc_id = doc_data['document_id']
                         
                         # Check if document has content
@@ -1280,7 +1264,7 @@ def show_upload_and_analyze():
                         
                         # Analyze document
                         with st.spinner("Analyzing document..."):
-                            print("DOC_ID:",doc_id)
+                            # print("DOC_ID:",doc_id)
                             analysis_response = make_api_request(
                                 f'/documents/{doc_id}/analyze',
                                 'POST',
@@ -1364,7 +1348,7 @@ def show_chat_with_documents():
         )
         
         selected_doc_id = doc_options[selected_doc_label]
-        print("Selected_Doc_ID",selected_doc_id)
+        # print("Selected_Doc_ID",selected_doc_id)
         
         # Show document info
         selected_doc = next(doc for doc in documents if doc['doc_id'] == selected_doc_id)
@@ -1434,7 +1418,7 @@ def show_chat_with_documents():
             
             with st.spinner("🔍 Searching document and generating answer..."):
                 # Query the document with extended timeout
-                print("Selected___Doc_ID:",selected_doc_id)
+                # print("Selected___Doc_ID:",selected_doc_id)
                 try:
                     query_response = make_api_request(
                         f'/documents/{selected_doc_id}/analyze',
@@ -1442,9 +1426,9 @@ def show_chat_with_documents():
                         {'query': user_question, 'type': 'qa'},
                         timeout=60  # Extended timeout for document analysis
                     )
-                    print(f"Query response status: {query_response.status_code if query_response else 'None'}")
+                    # print(f"Query response status: {query_response.status_code if query_response else 'None'}")
                 except Exception as req_error:
-                    print(f"Request error: {str(req_error)}")
+                    # print(f"Request error: {str(req_error)}")
                     query_response = None
                 
                 if query_response and query_response.status_code == 200:
@@ -1566,9 +1550,9 @@ def show_legal_assistant():
         with st.chat_message("assistant"):
             with st.spinner("Analyzing your question and generating response..."):
                 mode = 'short' if response_mode == "Short & Concise" else 'detailed'
-                response = make_api_request('/query', 'POST', {
+                response = make_api_request('/chat', 'POST', {
                     'query': prompt,
-                    'mode': mode
+                    'mode': 'simple'  # Use simple mode
                 })
                 
                 if response and response.status_code == 200:
@@ -1760,14 +1744,14 @@ def show_agent_query():
         # Get agent response
         with st.chat_message("assistant"):
             with st.spinner("🤖 Agent is thinking and executing tools..."):
-                response = make_api_request('/agent/query', 'POST', {
+                response = make_api_request('/chat', 'POST', {
                     'query': prompt,
-                    'verbose': False
+                    'mode': 'agent'  # Use agent mode for complex queries
                 }, timeout=120)
                 
                 if response and response.status_code == 200:
                     data = response.json()
-                    agent_response = data.get('answer', 'No response from agent')
+                    agent_response = data.get('response', 'No response from agent')
                     
                     st.markdown(agent_response)
                     
@@ -2070,6 +2054,182 @@ def show_my_documents():
             st.info("No documents uploaded yet. Go to Document Analysis to upload your first document!")
     else:
         st.error("Failed to load documents")
+
+def show_chat_page():
+    """Unified chat page - merges Legal Assistant and Agent Query"""
+    st.markdown("## 💬 Legal Chat Assistant")
+    st.caption("Ask questions about Indian law - AI auto-detects complexity and uses appropriate tools")
+    
+    # Mode selector
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        chat_mode = st.selectbox(
+            "Chat Mode",
+            ["🤖 Auto (Smart Detection)", "💡 Simple Mode", "🔧 Agent Mode"],
+            key="chat_mode_selector",
+            help="Auto mode intelligently chooses based on query complexity"
+        )
+    with col2:
+        if st.button("🗑️ Clear History", use_container_width=True):
+            st.session_state.chat_history = []
+            st.session_state.agent_chat_history = []
+            st.success("Chat cleared!")
+            st.rerun()
+    with col3:
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.rerun()
+    
+    # Determine API mode
+    if "Auto" in chat_mode:
+        api_mode = "auto"
+    elif "Simple" in chat_mode:
+        api_mode = "simple"
+    else:
+        api_mode = "agent"
+    
+    # Use appropriate chat history
+    if api_mode == "agent":
+        if 'agent_chat_history' not in st.session_state:
+            st.session_state.agent_chat_history = []
+        chat_history = st.session_state.agent_chat_history
+    else:
+        chat_history = st.session_state.chat_history
+    
+    # Display chat
+    if not chat_history:
+        st.info("👋 Start a conversation! Ask anything about Indian law.")
+    
+    for message in chat_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            if message.get("mode"):
+                st.caption(f"Mode: {message['mode']}")
+    
+    # Chat input
+    if prompt := st.chat_input("Ask your legal question..."):
+        # Add user message
+        chat_history.append({"role": "user", "content": prompt})
+        
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Get AI response
+        with st.chat_message("assistant"):
+            with st.spinner("🤖 Processing your question..."):
+                response = make_api_request('/chat', 'POST', {
+                    'query': prompt,
+                    'mode': api_mode
+                }, timeout=120)
+                
+                if response and response.status_code == 200:
+                    data = response.json()
+                    assistant_response = data.get('response', 'No response')
+                    mode_used = data.get('mode', 'unknown')
+                    
+                    st.markdown(assistant_response)
+                    st.caption(f"✨ Mode: {mode_used} | Features: {', '.join(data.get('features', []))}")
+                    
+                    chat_history.append({
+                        "role": "assistant",
+                        "content": assistant_response,
+                        "mode": mode_used
+                    })
+                else:
+                    error_msg = "Failed to get response. Please try again."
+                    st.error(error_msg)
+                    chat_history.append({"role": "assistant", "content": f"❌ {error_msg}"})
+
+def show_documents_page():
+    """Unified documents page - merges Document Analysis, RAG, and My Documents"""
+    st.markdown("## 📄 Document Management")
+    st.caption("Upload, analyze, and search through your legal documents")
+    
+    # Tabs for different document functions
+    tab1, tab2, tab3 = st.tabs(["📤 Upload & Analyze", "📁 My Documents", "💬 Chat with Documents"])
+    
+    with tab1:
+        st.markdown("### Upload Document")
+        uploaded_file = st.file_uploader(
+            "Choose a file",
+            type=['pdf', 'docx', 'txt'],
+            help="Upload PDF, DOCX, or TXT files (max 16MB)"
+        )
+        
+        if uploaded_file:
+            if st.button("🚀 Upload & Process", type="primary"):
+                with st.spinner("Processing document..."):
+                    files = {'file': uploaded_file}
+                    response = make_api_request('/documents/upload', 'POST', files=files)
+                    
+                    if response and response.status_code == 200:
+                        data = response.json()
+                        st.success(f"✅ {data['message']}")
+                        st.json(data.get('metadata', {}))
+                    else:
+                        st.error("Failed to upload document")
+    
+    with tab2:
+        st.markdown("### My Documents")
+        response = make_api_request('/documents', 'GET')
+        
+        if response and response.status_code == 200:
+            data = response.json()
+            documents = data.get('documents', [])
+            
+            if documents:
+                for doc in documents:
+                    with st.expander(f"📄 {doc['filename']}"):
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            st.write(f"**Type:** {doc['file_type']}")
+                            st.write(f"**Uploaded:** {doc['uploaded_at']}")
+                            st.write(f"**ID:** {doc['doc_id']}")
+                        with col2:
+                            if st.button("🗑️ Delete", key=f"del_{doc['doc_id']}"):
+                                del_response = make_api_request(f"/documents/{doc['doc_id']}", 'DELETE')
+                                if del_response and del_response.status_code == 200:
+                                    st.success("Deleted!")
+                                    st.rerun()
+            else:
+                st.info("No documents uploaded yet")
+        else:
+            st.error("Failed to load documents")
+    
+    with tab3:
+        st.markdown("### Chat with Your Documents")
+        st.caption("Ask questions about your uploaded documents")
+        
+        # Get documents list for selection
+        response = make_api_request('/documents', 'GET')
+        if response and response.status_code == 200:
+            docs = response.json().get('documents', [])
+            if docs:
+                selected_doc = st.selectbox(
+                    "Select Document",
+                    options=[d['doc_id'] for d in docs],
+                    format_func=lambda x: next(d['filename'] for d in docs if d['doc_id'] == x)
+                )
+                
+                question = st.text_input("Ask a question about this document:")
+                if st.button("🔍 Ask", type="primary") and question:
+                    with st.spinner("Searching document..."):
+                        response = make_api_request(f'/rag/documents/{selected_doc}/query', 'POST', {
+                            'question': question
+                        })
+                        
+                        if response and response.status_code == 200:
+                            data = response.json()
+                            st.markdown("### Answer")
+                            st.write(data.get('answer', 'No answer found'))
+                            
+                            if data.get('sources'):
+                                with st.expander("📚 Sources"):
+                                    for source in data['sources']:
+                                        st.markdown(f"- {source}")
+            else:
+                st.info("Upload documents first to chat with them")
+        else:
+            st.error("Failed to load documents")
 
 def show_settings():
     """User settings and preferences management"""

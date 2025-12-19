@@ -10,7 +10,7 @@ os.environ['GRPC_VERBOSITY'] = 'ERROR'
 os.environ['GLOG_minloglevel'] = '2'
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 
-from flask import Flask, request, jsonify, send_file, g
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -20,11 +20,12 @@ from modules.auth import auth_manager
 from modules.document_processor import DocumentProcessor
 from modules.legal_retriever import LegalRetriever
 from modules.memory_manager import MemoryManager
-from modules.orchestrator import LangChainOrchestrator
+# from modules.orchestrator import LangChainOrchestrator
 from modules.reasoning_engine import GeminiReasoningEngine
 from modules.document_rag_chromadb import ChromaDBRAGTool
 from modules.document_rag_langchain import create_document_rag_tools
 from modules.document_rag_routes import rag_bp
+# from modules.agent_graph import create_agent_graph
 
 # Import utilities
 from utils.logger import logger, setup_logger
@@ -58,15 +59,17 @@ engine = init_db(app.config['DB_URL'])
 # Initialize modules with error handling
 doc_processor = DocumentProcessor(app.config['UPLOAD_FOLDER'])
 legal_retriever = LegalRetriever()
-orchestrator = None
+# orchestrator = None
 reasoning_engine = None
 rag_tool = None
+rag_tool = None
 langchain_tools = None
+# agent_graph = None
 
 # Initialize AI modules with proper error handling
 try:
     if Config.GOOGLE_API_KEY and Config.GOOGLE_API_KEY != 'your_gemini_api_key_here':
-        orchestrator = LangChainOrchestrator()
+        # orchestrator = LangChainOrchestrator()
         reasoning_engine = GeminiReasoningEngine()
         
         # Initialize Document RAG Tool with ChromaDB (no API quota limits!)
@@ -75,6 +78,10 @@ try:
         
         logger.info("AI modules initialized successfully")
         logger.info(f"Document RAG Tool initialized with {len(langchain_tools)} LangChain tools")
+        
+        # Initialize LangGraph Agent
+        # agent_graph = create_agent_graph()
+        logger.info("LangGraph Agent initialized successfully")
     else:
         logger.warning("GOOGLE_API_KEY not configured. AI features will be limited.")
         logger.warning("Please set your API key in the .env file.")
@@ -86,7 +93,9 @@ except Exception as e:
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Register Document RAG API routes
+from modules.document_rag_routes import init_rag_routes
 app.register_blueprint(rag_bp)
+init_rag_routes(rag_tool)  # Pass the shared rag_tool instance
 logger.info("Document RAG API routes registered at /api/rag/*")
 
 # ============== Authentication Routes ==============
@@ -340,10 +349,10 @@ def upload_document():
         
         # Process document (in background in production)
         try:
-            print(f"Processing document: {filename} (type: {file_ext})")
+            # print(f"Processing document: {filename} (type: {file_ext})")
             result = doc_processor.process_document(file_path, file_ext)
             
-            print(f"Document processed successfully. Metadata: {result['metadata']}")
+            # print(f"Document processed successfully. Metadata: {result['metadata']}")
             
             # Validate extraction
             if result['metadata']['char_count'] == 0:
@@ -357,29 +366,27 @@ def upload_document():
                 doc.cached_text = result['text']
                 doc.cached_metadata = json.dumps(result['metadata'])
                 session.commit()
-                print(f"💾 Cached extracted text ({result['metadata']['char_count']} chars) in database")
+                # print(f"💾 Cached extracted text ({result['metadata']['char_count']} chars) in database")
             session.close()
             
-            # Add to RAG system (ChromaDB) if available
-            # if rag_tool:
-            #     try:
-            #         print(f"Adding document to RAG system...")
-            #         rag_result = rag_tool.add_document(
-            #             content=result['text'],
-            #             title=filename,
-            #             metadata={
-            #                 'file_type': file_ext,
-            #                 'user_id': user_id,
-            #                 'uploaded_at': datetime.utcnow().isoformat()
-            #             },
-            #             doc_id=doc_id  # Use the UUID from database
-            #         )
-            #         logger.info(f"Document {doc_id} added to RAG system: {rag_result.get('success', False)}")
-            #         print(f"RAG result: {rag_result}")
-            #     except Exception as rag_error:
-            #         logger.error(f"Failed to add document to RAG system: {str(rag_error)}")
-            #         print(f"RAG error: {str(rag_error)}")
-            #         # Continue even if RAG fails
+            # Add to RAG system (ChromaDB)
+            if rag_tool:
+                try:
+                    logger.info(f"Adding document to RAG system...")
+                    rag_result = rag_tool.add_document(
+                        content=result['text'],
+                        title=filename,
+                        metadata={
+                            'file_type': file_ext,
+                            'user_id': user_id,
+                            'uploaded_at': datetime.utcnow().isoformat()
+                        },
+                        doc_id=doc_id  # Use the UUID from database
+                    )
+                    logger.info(f"✅ Document {doc_id} added to RAG system successfully")
+                except Exception as rag_error:
+                    logger.error(f"Failed to add document to RAG system: {str(rag_error)}")
+                    # Continue even if RAG fails
             
             
             # Update document status
@@ -614,215 +621,180 @@ def get_document(doc_id):
 
 # ============== Query Routes ==============
 
-@app.route('/api/query', methods=['POST'])
+@app.route('/api/chat', methods=['POST'])
 @auth_manager.token_required
-def handle_query():
-    """Handle legal query with validation and semantic short answer"""
+def handle_smart_chat():
+    """Unified smart chat endpoint - auto-detects whether to use simple or agentic mode"""
     session = None
     try:
         data = request.get_json()
         query_text = data.get('query')
-        response_mode = data.get('mode', 'short')  # 'short' or 'detailed'
+        force_mode = data.get('mode', 'auto')  # 'auto', 'simple', or 'agent'
         
-        if not query_text:
-            return jsonify({'error': 'Query is required'}), 400
-        
-        # Basic validation
-        if len(query_text.strip()) < 10:
-            return jsonify({
-                'error': 'Query too short. Please provide more details.',
-                'suggestions': 'Try to be more specific about your legal question.'
-            }), 400
+        if not query_text or len(query_text.strip()) < 5:
+            return jsonify({'error': 'Please provide a more detailed query'}), 400
         
         user_id = request.current_user['user_id']
         user_role = request.current_user['role']
         
-        # Initialize session and memory manager
         session = get_session(engine)
         memory_mgr = MemoryManager(session)
-        
-        # Get user context from memory
         user_context = memory_mgr.build_user_context(user_id, user_role)
         
-        # Check if API key is configured
-        if not Config.GOOGLE_API_KEY or not reasoning_engine:
-            return jsonify({
-                'error': 'AI service not available. Please configure GOOGLE_API_KEY in .env file and restart the server.'
-            }), 503
-        
-        # Step 1: Validate query with user role context
-        validation_result = None
-        original_query = query_text
-        query_was_reiterated = False
-        
-        try:
-            validation_result = reasoning_engine.validate_query(query_text, user_role)
-            print(f"Query validation: {validation_result}")
+        # Auto-detect mode if not forced
+        if force_mode == 'auto':
+            # Check if user has documents
+            user = session.query(User).filter_by(id=user_id).first()
+            has_documents = user and session.query(Document).filter_by(user_id=user_id).count() > 0
             
-            # Check if query is valid
+            # Use agent if:
+            # 1. User has documents (might need RAG search)
+            # 2. Query is complex (more than 20 words)
+            # 3. Query contains tool-related keywords
+            word_count = len(query_text.split())
+            tool_keywords = ['find', 'search', 'compare', 'analyze', 'cases', 'document', 'precedent']
+            needs_tools = any(keyword in query_text.lower() for keyword in tool_keywords)
+            
+            use_agent = has_documents or word_count > 20 or needs_tools
+            mode = 'agent' if use_agent else 'simple'
+        else:
+            mode = force_mode
+        
+        logger.info(f"💬 Smart chat using {mode} mode for: {query_text[:100]}...")
+        
+        # Route to appropriate handler
+        if mode == 'agent':
+            # Use Agno agent with knowledge base
+            from modules.agno_agent import create_legal_agent
+            agent = create_legal_agent(user_role=user_role)
+            result = agent.query_sync(query=query_text, context=user_context)
+            
+            if not result.get('success'):
+                # Fallback to simple mode if agent fails
+                logger.warning("Agent failed, falling back to simple mode")
+                mode = 'simple'
+            else:
+                response_text = result.get('response', '')
+                
+                # Save to database
+                query_obj = Query(
+                    user_id=user_id,
+                    query_text=query_text,
+                    response_text=response_text,
+                    context=user_context
+                )
+                session.add(query_obj)
+                session.commit()
+                
+                return jsonify({
+                    'query': query_text,
+                    'response': response_text,
+                    'mode': 'agent',
+                    'features': ['knowledge_search', 'RAG', 'role_based'],
+                    'timestamp': result.get('timestamp')
+                }), 200
+        
+        # Simple mode (fallback or auto-detected)
+        if mode == 'simple':
+            # Validate query
+            validation_result = reasoning_engine.validate_query(query_text, user_role) if reasoning_engine else {'validated': True}
+            
             if not validation_result.get('validated', True):
                 return jsonify({
-                    'error': 'Query validation failed',
-                    'validation': validation_result,
-                    'suggestions': validation_result.get('suggestions', 'Please rephrase your question.')
+                    'error': 'Invalid query',
+                    'suggestions': validation_result.get('suggestions', 'Please rephrase')
                 }), 400
             
-            # Warn if not clearly legal
-            if not validation_result.get('is_legal', True):
-                return jsonify({
-                    'warning': 'This does not appear to be a legal question',
-                    'validation': validation_result,
-                    'suggestions': 'Please ask a question related to Indian law.'
-                }), 400
-            
-            # Step 2: Check quality score and clarity
-            quality_score = validation_result.get('quality_score', 10)
-            is_clear = validation_result.get('is_clear', 'yes')
-            
-            # If quality score < 8 or needs clarification, use reiterated query
-            if quality_score < 8 or is_clear == 'needs_clarification':
-                reiterated_query = validation_result.get('reiterated_query', '')
-                if reiterated_query and reiterated_query != query_text:
-                    print(f"Query reiterated: '{query_text}' -> '{reiterated_query}'")
-                    query_text = reiterated_query
-                    query_was_reiterated = True
-                
-        except Exception as val_error:
-            print(f"Validation warning: {str(val_error)}")
-            # Continue even if validation fails
-            validation_result = {'validated': True, 'quality_score': 5}
-        
-        # Step 2: Search for relevant cases (with error handling)
-        cases = []
-        try:
-            cases = legal_retriever.search_cases(query_text, limit=5)
-        except Exception as case_error:
-            print(f"Warning: Case search failed: {str(case_error)}")
+            # Search cases
             cases = []
-        
-        # Step 2.5: Search relevant documents using RAG (NEW!)
-        document_context = []
-        if rag_tool:
             try:
-                doc_search = rag_tool.semantic_search_all(query_text, top_k=5)
-                if doc_search.get('success') and doc_search.get('documents'):
-                    document_context = doc_search['documents'][:3]  # Top 3 relevant docs
-                    print(f"Found {len(document_context)} relevant documents in RAG")
-            except Exception as rag_error:
-                print(f"Warning: RAG search failed: {str(rag_error)}")
-        
-        # Step 3: Enhance context with cases and documents
-        # Add case context
-        if cases:
-            user_context += "\n\nRelevant Cases:\n"
-            for i, case in enumerate(cases[:3], 1):
-                user_context += f"{i}. {case.get('title', 'N/A')}\n"
-        
-        # Add document context from RAG (NEW!)
-        if document_context:
-            user_context += "\n\nRelevant Documents from Knowledge Base:\n"
-            for i, doc in enumerate(document_context, 1):
-                user_context += f"{i}. {doc.get('title', 'N/A')} (Relevance: {doc.get('max_similarity', 0):.2f})\n"
-                # Add top chunk preview
-                if doc.get('top_chunks'):
-                    preview = doc['top_chunks'][0].get('text', '')[:150]
-                    user_context += f"   Preview: {preview}...\n"
-        
-        # Step 4: Generate response based on mode
-        response_text = ""
-        try:
-            if response_mode == 'short':
-                # Generate semantic short answer
-                response_text = reasoning_engine.generate_semantic_short_answer(
-                    query_text,
-                    user_context,
-                    user_role,
-                    max_words=150
-                )
-            else:
-                # Generate detailed answer
-                response_text = reasoning_engine.generate_legal_advice(
-                    query_text,
-                    user_context,
-                    user_role
-                )
-        except Exception as ai_error:
-            print(f"AI Error: {str(ai_error)}")
-            import traceback
-            traceback.print_exc()
-            # Fallback response
-            response_text = f"I understand you're asking about: {query_text}\n\n"
-            response_text += "However, I'm currently experiencing technical difficulties. "
-            response_text += "Please try again or rephrase your question.\n\n"
-            response_text += f"Error: {str(ai_error)}"
-        
-        # Step 5: Store query
-        try:
-            new_query = Query(
-                user_id=user_id,
-                query_text=query_text,
-                response_text=response_text
-            )
-            
-            session.add(new_query)
-            session.commit()
-        except Exception as db_error:
-            print(f"Database error: {str(db_error)}")
-            # Continue even if storage fails
-        
-        # Build response
-        response_data = {
-            'query': query_text,
-            'original_query': original_query if query_was_reiterated else None,
-            'query_reiterated': query_was_reiterated,
-            'response': response_text,
-            'mode': response_mode,
-            'related_cases': cases[:3] if cases else [],
-            'related_documents': [  # NEW: Include document context
-                {
-                    'doc_id': doc.get('doc_id'),
-                    'title': doc.get('title'),
-                    'relevance': doc.get('max_similarity', 0),
-                    'preview': doc.get('top_chunks', [{}])[0].get('text', '')[:200] if doc.get('top_chunks') else ''
-                }
-                for doc in document_context
-            ] if document_context else []
-        }
-        
-        # Add validation info if available
-        if validation_result:
-            response_data['validation'] = {
-                'quality_score': validation_result.get('quality_score', 'N/A'),
-                'legal_domain': validation_result.get('legal_domain', 'general'),
-                'is_clear': validation_result.get('is_clear', 'yes')
-            }
-            
-            # Include suggestions if quality was low
-            if validation_result.get('quality_score', 10) < 8:
-                response_data['validation']['suggestions'] = validation_result.get('suggestions', '')
-        
-        # Add hint about using agent for complex document operations
-        if document_context and len(document_context) > 0:
-            response_data['hint'] = 'Multiple relevant documents found. Use /api/agent/query for complex document analysis.'
-        
-        return jsonify(response_data), 200
-        
-    except Exception as e:
-        print(f"Query handler error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'error': f'An error occurred: {str(e)}',
-            'details': 'Please check server logs for more information'
-        }), 500
-    finally:
-        if session:
-            try:
-                session.close()
+                cases = legal_retriever.search_cases(query_text, limit=3)
             except:
                 pass
+            
+            # Search documents
+            document_context = []
+            if rag_tool:
+                try:
+                    doc_search = rag_tool.semantic_search_all(query_text, top_k=3)
+                    if doc_search.get('success'):
+                        document_context = doc_search.get('documents', [])[:3]
+                except:
+                    pass
+            
+            # Generate response
+            if reasoning_engine:
+                response_text = reasoning_engine.generate_answer(
+                    query=query_text,
+                    cases=cases,
+                    role=user_role,
+                    context=user_context,
+                    document_context=document_context
+                )
+            else:
+                response_text = "AI service unavailable. Please configure GOOGLE_API_KEY."
+            
+            # Save to database
+            query_obj = Query(
+                user_id=user_id,
+                query_text=query_text,
+                response_text=response_text,
+                context=user_context
+            )
+            session.add(query_obj)
+            session.commit()
+            
+            return jsonify({
+                'query': query_text,
+                'response': response_text,
+                'mode': 'simple',
+                'features': ['case_search', 'document_search', 'role_based'],
+                'cases_found': len(cases),
+                'documents_found': len(document_context)
+            }), 200
+    
+    except Exception as e:
+        logger.error(f"Smart chat error: {str(e)}", exc_info=True)
+        if session:
+            session.rollback()
+        return jsonify({'error': f'Chat processing failed: {str(e)}'}), 500
+    finally:
+        if session:
+            session.close()
 
-# ============== Legal Research Routes ==============
+# Legacy endpoints (deprecated - use /api/chat instead)
+@app.route('/api/query', methods=['POST'])
+@auth_manager.token_required
+def handle_query():
+    """⚠️ DEPRECATED: Use /api/chat instead. This endpoint will be removed in future versions."""
+    # Forward to smart chat with simple mode
+    data = request.get_json()
+    data['mode'] = 'simple'
+    request._cached_json = (data, data)
+    return handle_smart_chat()
+
+@app.route('/api/agent/query', methods=['POST'])
+@auth_manager.token_required
+def handle_agent_query():
+    """⚠️ DEPRECATED: Use /api/chat instead. This endpoint will be removed in future versions."""
+    # Forward to smart chat with agent mode
+    data = request.get_json()
+    data['mode'] = 'agent'
+    request._cached_json = (data, data)
+    return handle_smart_chat()
+
+
+# Original query endpoint (commented for reference - can be deleted later)
+"""
+@app.route('/api/query', methods=['POST'])
+# Original query endpoint (commented for reference - can be deleted later)
+"""
+"""
+Old implementation removed - see git history if needed
+All old /api/query and /api/agent/query logic is now in /api/chat (handle_smart_chat)
+"""
+
+# ============== Document RAG Routes ==============
 
 @app.route('/api/research/cases', methods=['GET'])
 @auth_manager.token_required
@@ -886,7 +858,7 @@ def health_check():
     # AI modules check
     ai_modules_status = {
         'reasoning_engine': reasoning_engine is not None,
-        'orchestrator': orchestrator is not None,
+        # 'orchestrator': orchestrator is not None,
         'rag_tool': rag_tool is not None,
         'langchain_tools': langchain_tools is not None and len(langchain_tools) > 0 if langchain_tools else False,
         'api_key_configured': bool(Config.GOOGLE_API_KEY and Config.GOOGLE_API_KEY != 'your_gemini_api_key_here')
@@ -936,386 +908,386 @@ def health_check():
     
     return jsonify(health_status), status_code
 
-@app.route('/api/agent/query', methods=['POST'])
-@auth_manager.token_required
-def agent_query():
-    """
-    LangGraph-based intelligent agent endpoint
-    Uses state-based graph workflow for autonomous tool selection and execution
-    """
-    session = None
-    try:
-        # Validate availability
-        if not langchain_tools or not orchestrator:
-            return jsonify({
-                'error': 'Agent not available. Please configure GOOGLE_API_KEY and restart.'
-            }), 503
+# @app.route('/api/agent/query', methods=['POST'])
+# @auth_manager.token_required
+# def agent_query():
+#     """
+#     LangGraph-based intelligent agent endpoint
+#     Uses state-based graph workflow for autonomous tool selection and execution
+#     """
+#     session = None
+#     try:
+#         # Validate availability
+#         if not langchain_tools or not orchestrator:
+#             return jsonify({
+#                 'error': 'Agent not available. Please configure GOOGLE_API_KEY and restart.'
+#             }), 503
         
-        # Parse request
-        data = request.get_json()
-        query_text = data.get('query')
-        max_iterations = data.get('max_iterations', 10)
-        verbose = data.get('verbose', False)
-        stream = data.get('stream', False)  # Future: streaming support
+#         # Parse request
+#         data = request.get_json()
+#         query_text = data.get('query')
+#         max_iterations = data.get('max_iterations', 10)
+#         verbose = data.get('verbose', False)
+#         stream = data.get('stream', False)  # Future: streaming support
         
-        if not query_text:
-            return jsonify({'error': 'Query is required'}), 400
+#         if not query_text:
+#             return jsonify({'error': 'Query is required'}), 400
         
-        if len(query_text.strip()) < 5:
-            return jsonify({'error': 'Query too short. Please provide more details.'}), 400
+#         if len(query_text.strip()) < 5:
+#             return jsonify({'error': 'Query too short. Please provide more details.'}), 400
         
-        user_id = request.current_user['user_id']
-        user_role = request.current_user['role']
+#         user_id = request.current_user['user_id']
+#         user_role = request.current_user['role']
         
-        # Initialize session and memory manager
-        session = get_session(engine)
-        memory_mgr = MemoryManager(session)
-        user_context = memory_mgr.build_user_context(user_id, user_role)
+#         # Initialize session and memory manager
+#         session = get_session(engine)
+#         memory_mgr = MemoryManager(session)
+#         user_context = memory_mgr.build_user_context(user_id, user_role)
         
-        # Import LangGraph components
-        from typing import TypedDict, Annotated, Sequence
-        from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        from langchain_classic.tools import Tool
-        from langgraph.graph import StateGraph, END
-        from langgraph.prebuilt import ToolNode
-        import operator
+#         # Import LangGraph components
+#         from typing import TypedDict, Annotated, Sequence
+#         from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
+#         from langchain_google_genai import ChatGoogleGenerativeAI
+#         from langchain_classic.tools import Tool
+#         from langgraph.graph import StateGraph, END
+#         from langgraph.prebuilt import ToolNode
+#         import operator
         
-        # Define agent state
-        class AgentState(TypedDict):
-            """State of the agent workflow"""
-            messages: Annotated[Sequence[BaseMessage], operator.add]
-            user_query: str
-            user_role: str
-            iterations: int
-            max_iterations: int
-            final_answer: str
-            tools_used: list
-            execution_log: list
+#         # Define agent state
+#         class AgentState(TypedDict):
+#             """State of the agent workflow"""
+#             messages: Annotated[Sequence[BaseMessage], operator.add]
+#             user_query: str
+#             user_role: str
+#             iterations: int
+#             max_iterations: int
+#             final_answer: str
+#             tools_used: list
+#             execution_log: list
         
-        # Initialize LLM
-        llm = ChatGoogleGenerativeAI(
-            model=Config.LLM_MODEL,
-            google_api_key=Config.GOOGLE_API_KEY,
-            temperature=0.3,
-            max_output_tokens=2048
-        )
+#         # Initialize LLM
+#         llm = ChatGoogleGenerativeAI(
+#             model=Config.LLM_MODEL,
+#             google_api_key=Config.GOOGLE_API_KEY,
+#             temperature=0.3,
+#             max_output_tokens=2048
+#         )
         
-        # Prepare tools
-        available_tools = []
-        tool_names = []
+#         # Prepare tools
+#         available_tools = []
+#         tool_names = []
         
-        # Add RAG tools
-        if langchain_tools:
-            available_tools.extend(langchain_tools)
-            tool_names.extend([tool.name for tool in langchain_tools])
-            logger.info(f"Added {len(langchain_tools)} RAG tools: {tool_names}")
+#         # Add RAG tools
+#         if langchain_tools:
+#             available_tools.extend(langchain_tools)
+#             tool_names.extend([tool.name for tool in langchain_tools])
+#             logger.info(f"Added {len(langchain_tools)} RAG tools: {tool_names}")
         
-        # Add case search tool
-        def search_legal_cases(query: str) -> str:
-            """Search for relevant Indian legal cases"""
-            try:
-                cases = legal_retriever.search_cases(query, limit=5)
-                if not cases:
-                    return "No relevant cases found."
+#         # Add case search tool
+#         def search_legal_cases(query: str) -> str:
+#             """Search for relevant Indian legal cases"""
+#             try:
+#                 cases = legal_retriever.search_cases(query, limit=5)
+#                 if not cases:
+#                     return "No relevant cases found."
                 
-                output = f"Found {len(cases)} relevant cases:\n\n"
-                for i, case in enumerate(cases, 1):
-                    output += f"{i}. {case.get('title', 'N/A')}\n"
-                    output += f"   Court: {case.get('court', 'N/A')}\n"
-                    output += f"   Summary: {case.get('summary', 'N/A')[:200]}...\n\n"
-                return output
-            except Exception as e:
-                return f"Error searching cases: {str(e)}"
+#                 output = f"Found {len(cases)} relevant cases:\n\n"
+#                 for i, case in enumerate(cases, 1):
+#                     output += f"{i}. {case.get('title', 'N/A')}\n"
+#                     output += f"   Court: {case.get('court', 'N/A')}\n"
+#                     output += f"   Summary: {case.get('summary', 'N/A')[:200]}...\n\n"
+#                 return output
+#             except Exception as e:
+#                 return f"Error searching cases: {str(e)}"
         
-        case_search_tool = Tool(
-            name="search_legal_cases",
-            func=search_legal_cases,
-            description="Search for relevant Indian legal cases and precedents. Input: search query string. Returns: List of relevant cases with summaries."
-        )
-        available_tools.append(case_search_tool)
-        tool_names.append("search_legal_cases")
+#         case_search_tool = Tool(
+#             name="search_legal_cases",
+#             func=search_legal_cases,
+#             description="Search for relevant Indian legal cases and precedents. Input: search query string. Returns: List of relevant cases with summaries."
+#         )
+#         available_tools.append(case_search_tool)
+#         tool_names.append("search_legal_cases")
         
-        logger.info(f"Total tools available: {len(available_tools)} - {tool_names}")
+#         logger.info(f"Total tools available: {len(available_tools)} - {tool_names}")
         
-        # Bind tools to LLM
-        llm_with_tools = llm.bind_tools(available_tools)
+#         # Bind tools to LLM
+#         llm_with_tools = llm.bind_tools(available_tools)
         
-        # Define agent nodes
-        def agent_node(state: AgentState) -> AgentState:
-            """Main agent reasoning node"""
-            # Role-specific context
-            role_context = {
-                "LAWYER": "You are assisting a practicing lawyer. Provide detailed legal analysis with case law references.",
-                "STUDENT": "You are assisting a law student. Explain legal concepts clearly with educational context.",
-                "PUBLIC": "You are assisting a member of the public. Use simple, accessible language.",
-                # Fallback for lowercase (backwards compatibility)
-                "lawyer": "You are assisting a practicing lawyer. Provide detailed legal analysis with case law references.",
-                "student": "You are assisting a law student. Explain legal concepts clearly with educational context.",
-                "public": "You are assisting a member of the public. Use simple, accessible language."
-            }
+#         # Define agent nodes
+#         def agent_node(state: AgentState) -> AgentState:
+#             """Main agent reasoning node"""
+#             # Role-specific context
+#             role_context = {
+#                 "LAWYER": "You are assisting a practicing lawyer. Provide detailed legal analysis with case law references.",
+#                 "STUDENT": "You are assisting a law student. Explain legal concepts clearly with educational context.",
+#                 "PUBLIC": "You are assisting a member of the public. Use simple, accessible language.",
+#                 # Fallback for lowercase (backwards compatibility)
+#                 "lawyer": "You are assisting a practicing lawyer. Provide detailed legal analysis with case law references.",
+#                 "student": "You are assisting a law student. Explain legal concepts clearly with educational context.",
+#                 "public": "You are assisting a member of the public. Use simple, accessible language."
+#             }
             
-            system_prompt = f"""You are LuminaryAI, an intelligent legal assistant specializing in Indian law.
+#             system_prompt = f"""You are LuminaryAI, an intelligent legal assistant specializing in Indian law.
 
-{role_context.get(state['user_role'], role_context['PUBLIC'])}
+# {role_context.get(state['user_role'], role_context['PUBLIC'])}
 
-User Context and Preferences:
-{user_context}
+# User Context and Preferences:
+# {user_context}
 
-You have access to tools for:
-- Searching and querying documents in the knowledge base
-- Finding relevant legal cases and precedents
-- Comparing documents
-- Managing document collection
+# You have access to tools for:
+# - Searching and querying documents in the knowledge base
+# - Finding relevant legal cases and precedents
+# - Comparing documents
+# - Managing document collection
 
-When answering:
-1. Use tools to gather information when needed
-2. Cite sources (document IDs, case names) when using retrieved information
-3. Provide structured, comprehensive answers
-4. Be clear about what information comes from which source
-5. If you don't have enough information, use search tools to find it
-6. Consider user preferences and previous interactions from their context
+# When answering:
+# 1. Use tools to gather information when needed
+# 2. Cite sources (document IDs, case names) when using retrieved information
+# 3. Provide structured, comprehensive answers
+# 4. Be clear about what information comes from which source
+# 5. If you don't have enough information, use search tools to find it
+# 6. Consider user preferences and previous interactions from their context
 
-Current iteration: {state['iterations']}/{state['max_iterations']}
-"""
+# Current iteration: {state['iterations']}/{state['max_iterations']}
+# """
             
-            messages = [HumanMessage(content=system_prompt)] + state['messages']
+#             messages = [HumanMessage(content=system_prompt)] + state['messages']
             
-            # Call LLM with tools
-            response = llm_with_tools.invoke(messages)
+#             # Call LLM with tools
+#             response = llm_with_tools.invoke(messages)
             
-            # Log execution
-            execution_entry = {
-                'iteration': state['iterations'],
-                'type': 'agent_reasoning',
-                'content': response.content if hasattr(response, 'content') else str(response)[:200]
-            }
+#             # Log execution
+#             execution_entry = {
+#                 'iteration': state['iterations'],
+#                 'type': 'agent_reasoning',
+#                 'content': response.content if hasattr(response, 'content') else str(response)[:200]
+#             }
             
-            return {
-                "messages": [response],
-                "iterations": state['iterations'] + 1,
-                "execution_log": state['execution_log'] + [execution_entry]
-            }
+#             return {
+#                 "messages": [response],
+#                 "iterations": state['iterations'] + 1,
+#                 "execution_log": state['execution_log'] + [execution_entry]
+#             }
         
-        def tool_node(state: AgentState) -> AgentState:
-            """Execute tools called by the agent"""
-            last_message = state['messages'][-1]
+#         def tool_node(state: AgentState) -> AgentState:
+#             """Execute tools called by the agent"""
+#             last_message = state['messages'][-1]
             
-            # Check if there are tool calls
-            if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
-                return state
+#             # Check if there are tool calls
+#             if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
+#                 return state
             
-            # Execute each tool call
-            tool_messages = []
-            tools_used = state.get('tools_used', [])
-            execution_log = state.get('execution_log', [])
+#             # Execute each tool call
+#             tool_messages = []
+#             tools_used = state.get('tools_used', [])
+#             execution_log = state.get('execution_log', [])
             
-            # Create tool executor
-            tool_executor = ToolNode(available_tools)
+#             # Create tool executor
+#             tool_executor = ToolNode(available_tools)
             
-            for tool_call in last_message.tool_calls:
-                tool_name = tool_call.get('name', 'unknown')
-                tools_used.append(tool_name)
+#             for tool_call in last_message.tool_calls:
+#                 tool_name = tool_call.get('name', 'unknown')
+#                 tools_used.append(tool_name)
                 
-                # Execute tool
-                try:
-                    result = tool_executor.invoke(state)
+#                 # Execute tool
+#                 try:
+#                     result = tool_executor.invoke(state)
                     
-                    # Log execution
-                    execution_log.append({
-                        'iteration': state['iterations'],
-                        'type': 'tool_execution',
-                        'tool': tool_name,
-                        'input': str(tool_call.get('args', {}))[:200],
-                        'success': True
-                    })
+#                     # Log execution
+#                     execution_log.append({
+#                         'iteration': state['iterations'],
+#                         'type': 'tool_execution',
+#                         'tool': tool_name,
+#                         'input': str(tool_call.get('args', {}))[:200],
+#                         'success': True
+#                     })
                     
-                    return result
+#                     return result
                     
-                except Exception as tool_error:
-                    logger.error(f"Tool execution error: {str(tool_error)}")
+#                 except Exception as tool_error:
+#                     logger.error(f"Tool execution error: {str(tool_error)}")
                     
-                    # Create error message
-                    error_msg = ToolMessage(
-                        content=f"Error executing {tool_name}: {str(tool_error)}",
-                        tool_call_id=tool_call.get('id', 'unknown')
-                    )
-                    tool_messages.append(error_msg)
+#                     # Create error message
+#                     error_msg = ToolMessage(
+#                         content=f"Error executing {tool_name}: {str(tool_error)}",
+#                         tool_call_id=tool_call.get('id', 'unknown')
+#                     )
+#                     tool_messages.append(error_msg)
                     
-                    execution_log.append({
-                        'iteration': state['iterations'],
-                        'type': 'tool_execution',
-                        'tool': tool_name,
-                        'input': str(tool_call.get('args', {}))[:200],
-                        'success': False,
-                        'error': str(tool_error)
-                    })
+#                     execution_log.append({
+#                         'iteration': state['iterations'],
+#                         'type': 'tool_execution',
+#                         'tool': tool_name,
+#                         'input': str(tool_call.get('args', {}))[:200],
+#                         'success': False,
+#                         'error': str(tool_error)
+#                     })
             
-            return {
-                "messages": tool_messages,
-                "tools_used": tools_used,
-                "execution_log": execution_log
-            }
+#             return {
+#                 "messages": tool_messages,
+#                 "tools_used": tools_used,
+#                 "execution_log": execution_log
+#             }
         
-        def should_continue(state: AgentState) -> str:
-            """Decide whether to continue or end"""
-            last_message = state['messages'][-1]
+#         def should_continue(state: AgentState) -> str:
+#             """Decide whether to continue or end"""
+#             last_message = state['messages'][-1]
             
-            # Check iteration limit
-            if state['iterations'] >= state['max_iterations']:
-                return "end"
+#             # Check iteration limit
+#             if state['iterations'] >= state['max_iterations']:
+#                 return "end"
             
-            # Check if there are tool calls
-            if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-                return "continue"
+#             # Check if there are tool calls
+#             if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+#                 return "continue"
             
-            # No more tool calls - end
-            return "end"
+#             # No more tool calls - end
+#             return "end"
         
-        def finalize_answer(state: AgentState) -> AgentState:
-            """Extract final answer from conversation"""
-            last_message = state['messages'][-1]
+#         def finalize_answer(state: AgentState) -> AgentState:
+#             """Extract final answer from conversation"""
+#             last_message = state['messages'][-1]
             
-            if hasattr(last_message, 'content'):
-                final_answer = last_message.content
-            else:
-                final_answer = str(last_message)
+#             if hasattr(last_message, 'content'):
+#                 final_answer = last_message.content
+#             else:
+#                 final_answer = str(last_message)
             
-            return {
-                "final_answer": final_answer
-            }
+#             return {
+#                 "final_answer": final_answer
+#             }
         
-        # Build LangGraph workflow
-        workflow = StateGraph(AgentState)
+#         # Build LangGraph workflow
+#         workflow = StateGraph(AgentState)
         
-        # Add nodes
-        workflow.add_node("agent", agent_node)
-        workflow.add_node("tools", tool_node)
-        workflow.add_node("finalize", finalize_answer)
+#         # Add nodes
+#         workflow.add_node("agent", agent_node)
+#         workflow.add_node("tools", tool_node)
+#         workflow.add_node("finalize", finalize_answer)
         
-        # Add edges
-        workflow.set_entry_point("agent")
+#         # Add edges
+#         workflow.set_entry_point("agent")
         
-        workflow.add_conditional_edges(
-            "agent",
-            should_continue,
-            {
-                "continue": "tools",
-                "end": "finalize"
-            }
-        )
+#         workflow.add_conditional_edges(
+#             "agent",
+#             should_continue,
+#             {
+#                 "continue": "tools",
+#                 "end": "finalize"
+#             }
+#         )
         
-        workflow.add_edge("tools", "agent")
-        workflow.add_edge("finalize", END)
+#         workflow.add_edge("tools", "agent")
+#         workflow.add_edge("finalize", END)
         
-        # Compile graph
-        app_graph = workflow.compile()
+#         # Compile graph
+#         app_graph = workflow.compile()
         
-        # Get user context
-        session = get_session(engine)
-        memory_mgr = MemoryManager(session)
-        user_context = memory_mgr.build_user_context(user_id, user_role)
+#         # Get user context
+#         session = get_session(engine)
+#         memory_mgr = MemoryManager(session)
+#         user_context = memory_mgr.build_user_context(user_id, user_role)
         
-        # Initialize state
-        initial_state = {
-            "messages": [HumanMessage(content=f"{query_text}\n\nUser Context: {user_context}")],
-            "user_query": query_text,
-            "user_role": user_role,
-            "iterations": 0,
-            "max_iterations": max_iterations,
-            "final_answer": "",
-            "tools_used": [],
-            "execution_log": []
-        }
+#         # Initialize state
+#         initial_state = {
+#             "messages": [HumanMessage(content=f"{query_text}\n\nUser Context: {user_context}")],
+#             "user_query": query_text,
+#             "user_role": user_role,
+#             "iterations": 0,
+#             "max_iterations": max_iterations,
+#             "final_answer": "",
+#             "tools_used": [],
+#             "execution_log": []
+#         }
         
-        # Execute graph
-        logger.info(f"LangGraph agent executing query from user {user_id}: {query_text}")
+#         # Execute graph
+#         logger.info(f"LangGraph agent executing query from user {user_id}: {query_text}")
         
-        try:
-            # Run the graph
-            final_state = app_graph.invoke(initial_state)
+#         try:
+#             # Run the graph
+#             final_state = app_graph.invoke(initial_state)
             
-            # Extract results
-            final_answer = final_state.get('final_answer', '')
-            tools_used = list(set(final_state.get('tools_used', [])))
-            iterations = final_state.get('iterations', 0)
-            execution_log = final_state.get('execution_log', [])
+#             # Extract results
+#             final_answer = final_state.get('final_answer', '')
+#             tools_used = list(set(final_state.get('tools_used', [])))
+#             iterations = final_state.get('iterations', 0)
+#             execution_log = final_state.get('execution_log', [])
             
-            # Store query in database
-            try:
-                new_query = Query(
-                    user_id=user_id,
-                    query_text=query_text,
-                    response_text=final_answer
-                )
-                session.add(new_query)
-                session.commit()
-            except Exception as db_error:
-                logger.error(f"Database error: {str(db_error)}")
+#             # Store query in database
+#             try:
+#                 new_query = Query(
+#                     user_id=user_id,
+#                     query_text=query_text,
+#                     response_text=final_answer
+#                 )
+#                 session.add(new_query)
+#                 session.commit()
+#             except Exception as db_error:
+#                 logger.error(f"Database error: {str(db_error)}")
             
-            # Build response
-            response_data = {
-                'query': query_text,
-                'response': final_answer,
-                'agent_info': {
-                    'type': 'langgraph',
-                    'tools_available': tool_names,
-                    'tools_used': tools_used,
-                    'iterations': iterations,
-                    'max_iterations': max_iterations,
-                    'user_role': user_role
-                },
-                'execution_summary': f"LangGraph agent completed in {iterations} iterations using {len(tools_used)} tools out of {len(available_tools)} available"
-            }
+#             # Build response
+#             response_data = {
+#                 'query': query_text,
+#                 'response': final_answer,
+#                 'agent_info': {
+#                     'type': 'langgraph',
+#                     'tools_available': tool_names,
+#                     'tools_used': tools_used,
+#                     'iterations': iterations,
+#                     'max_iterations': max_iterations,
+#                     'user_role': user_role
+#                 },
+#                 'execution_summary': f"LangGraph agent completed in {iterations} iterations using {len(tools_used)} tools out of {len(available_tools)} available"
+#             }
             
-            # Add execution log if verbose
-            if verbose:
-                response_data['execution_log'] = execution_log
+#             # Add execution log if verbose
+#             if verbose:
+#                 response_data['execution_log'] = execution_log
             
-            logger.info(f"LangGraph agent completed: {len(tools_used)} tools used, {iterations} iterations")
+#             logger.info(f"LangGraph agent completed: {len(tools_used)} tools used, {iterations} iterations")
             
-            return jsonify(response_data), 200
+#             return jsonify(response_data), 200
             
-        except Exception as graph_error:
-            logger.error(f"LangGraph execution error: {str(graph_error)}", exc_info=True)
+#         except Exception as graph_error:
+#             logger.error(f"LangGraph execution error: {str(graph_error)}", exc_info=True)
             
-            # Fallback to basic reasoning engine
-            if reasoning_engine:
-                session_db = get_session(engine)
-                memory_mgr = MemoryManager(session_db)
-                user_context = memory_mgr.build_user_context(user_id, user_role)
+#             # Fallback to basic reasoning engine
+#             if reasoning_engine:
+#                 session_db = get_session(engine)
+#                 memory_mgr = MemoryManager(session_db)
+#                 user_context = memory_mgr.build_user_context(user_id, user_role)
                 
-                fallback_response = reasoning_engine.generate_legal_advice(
-                    query_text,
-                    user_context,
-                    user_role
-                )
-                session_db.close()
+#                 fallback_response = reasoning_engine.generate_legal_advice(
+#                     query_text,
+#                     user_context,
+#                     user_role
+#                 )
+#                 session_db.close()
                 
-                return jsonify({
-                    'query': query_text,
-                    'response': fallback_response,
-                    'warning': 'Agent execution failed, fallback response provided',
-                    'error_details': str(graph_error) if verbose else 'Enable verbose mode for details'
-                }), 200
-            else:
-                return jsonify({
-                    'error': 'Agent execution failed and no fallback available',
-                    'details': str(graph_error) if verbose else 'Enable verbose mode for details'
-                }), 500
+#                 return jsonify({
+#                     'query': query_text,
+#                     'response': fallback_response,
+#                     'warning': 'Agent execution failed, fallback response provided',
+#                     'error_details': str(graph_error) if verbose else 'Enable verbose mode for details'
+#                 }), 200
+#             else:
+#                 return jsonify({
+#                     'error': 'Agent execution failed and no fallback available',
+#                     'details': str(graph_error) if verbose else 'Enable verbose mode for details'
+#                 }), 500
         
-    except Exception as e:
-        logger.error(f"Agent endpoint error: {str(e)}", exc_info=True)
-        return jsonify({
-            'error': f'An error occurred: {str(e)}',
-            'details': 'Please check server logs for more information'
-        }), 500
-    finally:
-        if session:
-            try:
-                session.close()
-            except:
-                pass
+#     except Exception as e:
+#         logger.error(f"Agent endpoint error: {str(e)}", exc_info=True)
+#         return jsonify({
+#             'error': f'An error occurred: {str(e)}',
+#             'details': 'Please check server logs for more information'
+#         }), 500
+#     finally:
+#         if session:
+#             try:
+#                 session.close()
+#             except:
+#                 pass
 
 @app.route('/api/status', methods=['GET'])
 def status_check():
@@ -1324,7 +1296,7 @@ def status_check():
         'database': 'unknown',
         'ai_modules': {
             'reasoning_engine': reasoning_engine is not None,
-            'orchestrator': orchestrator is not None,
+            # 'orchestrator': orchestrator is not None,
             'rag_tool': rag_tool is not None,
             'langchain_tools': langchain_tools is not None and len(langchain_tools) if langchain_tools else 0
         },

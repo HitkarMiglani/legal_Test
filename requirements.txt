@@ -6,14 +6,15 @@ streamlit
 python-dotenv
 psutil
 
+# Agno Framework for Intelligent Agents
+agno
+huggingface_hub
+
 # AI and ML
 langchain
-langchain-google-genai>=3.0.0
-google-generativeai
-# Note: Known conflicts:
-# - google-generativeai requires google-ai-generativelanguage==0.6.15
-# - langchain-google-genai requires google-ai-generativelanguage>=0.7.0
-# These are acceptable and both packages work correctly despite the conflict
+# langchain-google-genai>=3.0.0
+# google-generativeai
+# Note: pip will automatically resolve compatible google-ai-generativelanguage version
 transformers
 torch
 sentence-transformers
@@ -33,8 +34,6 @@ pytesseract
 # Mac: brew install tesseract
 
 # Database and Storage
-firebase-admin
-boto3
 sqlalchemy
 
 # Authentication and Security
@@ -48,12 +47,10 @@ aiohttp
 
 # Embeddings and Vector DB
 chromadb
-faiss-cpu
 
 # Utilities
 pandas
 numpy
-python-multipart
 Pillow
 validators
 
